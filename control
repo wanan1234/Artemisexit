@@ -1,8 +1,8 @@
-Package: com.yourname.artemisdiagnose
-Name: ArtemisDiagnose
+Package: com.yourname.artemisautoquit
+Name: ArtemisAutoQuit
 Version: 1.0.0
 Architecture: iphoneos-arm
-Description: Diagnose Artemis engine exit behavior.
+Description: Auto quit app when game exits.
 Depends: firmware (>= 14.0)
 Maintainer: Your Name <your@email.com>
 Author: Your Name <your@email.com>
