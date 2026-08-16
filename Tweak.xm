@@ -1,5 +1,5 @@
 // =============================================================
-//  ArtemisAutoQuit — 猫爪浮窗 + 抽屉菜单版
+//  ArtemisAutoQuit — 猫爪浮窗 + 抽屉菜单版（修正编译错误）
 //  功能：玻璃质感猫爪浮窗，点击后弹出圆形确定/取消按钮
 //  图标：使用本地 catpaw.png
 // =============================================================
@@ -33,7 +33,6 @@ static BOOL isDrawerVisible = NO;
 @implementation FloatButtonTarget
 
 - (void)buttonTapped {
-    // 显示抽屉
     if (isDrawerVisible) {
         [self hideDrawer];
     } else {
@@ -46,9 +45,8 @@ static BOOL isDrawerVisible = NO;
     isDrawerVisible = YES;
     
     if (!drawerWindow) {
-        // 创建抽屉窗口
         drawerWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        drawerWindow.windowLevel = UIWindowLevelAlert + 1; // 在浮窗之上
+        drawerWindow.windowLevel = UIWindowLevelAlert + 1;
         drawerWindow.backgroundColor = [UIColor clearColor];
         drawerWindow.userInteractionEnabled = YES;
         drawerWindow.hidden = NO;
@@ -57,25 +55,22 @@ static BOOL isDrawerVisible = NO;
         rootVC.view.backgroundColor = [UIColor clearColor];
         drawerWindow.rootViewController = rootVC;
         
-        // 点击背景关闭抽屉
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideDrawer)];
         [rootVC.view addGestureRecognizer:tap];
     }
     
-    // 获取浮窗位置（相对于屏幕）
     CGPoint floatCenter = floatWindow.center;
     CGFloat buttonSize = 50;
     CGFloat spacing = 20;
     
-    // 确定按钮位置（浮窗上方或下方，优先上方，若上方空间不足则下方）
-    CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
-    BOOL showAbove = (floatCenter.y - 80 > 0); // 上方空间
+    // 决定按钮显示在浮窗上方还是下方
+    BOOL showAbove = (floatCenter.y - 80 > 0);
     CGFloat yOffset = showAbove ? - (buttonSize + spacing) : (buttonSize + spacing);
     
     CGPoint confirmCenter = CGPointMake(floatCenter.x, floatCenter.y + yOffset);
     CGPoint cancelCenter = CGPointMake(floatCenter.x, floatCenter.y + yOffset + (showAbove ? -(buttonSize + spacing) : (buttonSize + spacing)));
     
-    // 创建确认按钮（红色）
+    // 确认按钮（红色 ✓）
     confirmButton = [UIButton buttonWithType:UIButtonTypeCustom];
     confirmButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
     confirmButton.center = confirmCenter;
@@ -85,7 +80,6 @@ static BOOL isDrawerVisible = NO;
     confirmButton.userInteractionEnabled = YES;
     [confirmButton addTarget:self action:@selector(confirmQuit) forControlEvents:UIControlEventTouchUpInside];
     
-    // 毛玻璃效果
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
     UIVisualEffectView *blurViewBtn = [[UIVisualEffectView alloc] initWithEffect:blur];
     blurViewBtn.frame = confirmButton.bounds;
@@ -94,7 +88,6 @@ static BOOL isDrawerVisible = NO;
     blurViewBtn.userInteractionEnabled = NO;
     [confirmButton addSubview:blurViewBtn];
     
-    // 红色遮罩
     UIView *tint = [[UIView alloc] initWithFrame:confirmButton.bounds];
     tint.backgroundColor = [UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:0.4];
     tint.layer.cornerRadius = buttonSize/2;
@@ -102,7 +95,6 @@ static BOOL isDrawerVisible = NO;
     tint.userInteractionEnabled = NO;
     [confirmButton addSubview:tint];
     
-    // “确定”文字
     UILabel *label = [[UILabel alloc] initWithFrame:confirmButton.bounds];
     label.text = @"✓";
     label.textColor = [UIColor whiteColor];
@@ -116,7 +108,7 @@ static BOOL isDrawerVisible = NO;
     confirmButton.layer.shadowRadius = 8;
     confirmButton.layer.shadowOpacity = 0.3;
     
-    // 创建取消按钮（灰色）
+    // 取消按钮（灰色 ✕）
     cancelButton = [UIButton buttonWithType:UIButtonTypeCustom];
     cancelButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
     cancelButton.center = cancelCenter;
@@ -154,7 +146,6 @@ static BOOL isDrawerVisible = NO;
     cancelButton.layer.shadowRadius = 8;
     cancelButton.layer.shadowOpacity = 0.3;
     
-    // 添加到抽屉窗口
     [drawerWindow.rootViewController.view addSubview:confirmButton];
     [drawerWindow.rootViewController.view addSubview:cancelButton];
     drawerWindow.hidden = NO;
@@ -242,10 +233,8 @@ static void initialize() {
         // 加载本地猫爪图标
         UIImage *pawImage = [UIImage imageNamed:@"catpaw"];
         if (!pawImage) {
-            // 若未找到，使用 SF Symbol 作为后备
             pawImage = [UIImage systemImageNamed:@"paw.fill"];
             if (!pawImage) {
-                // 最终备：纯色方块
                 UIGraphicsBeginImageContext(CGSizeMake(22, 22));
                 [[UIColor colorWithRed:1.0 green:0.6 blue:0.6 alpha:1.0] setFill];
                 UIBezierPath *path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(0, 0, 22, 22)];
