@@ -26,9 +26,8 @@ jobs:
         env:
           THEOS: $HOME/theos
         run: |
-          export THEOS="$HOME/theos"
-          # 无需 make clean，环境全新
-          make package FINALPACKAGE=1
+          export THEOS="$THEOS"
+          make package FINALPACKAGE=1 SDK_VERSION=latest
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
