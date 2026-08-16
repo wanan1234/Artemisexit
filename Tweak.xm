@@ -1,21 +1,15 @@
 // =============================================================
-//  ArtemisAutoQuit — 最终稳定版
-//  功能：猫爪浮窗（点击弹窗，长按直接退出）
-//       三指双击切换浮窗显示
-//  修复：弹窗独立窗口，不干扰游戏布局；退出强制终止进程
+//  ArtemisAutoQuit — 最终稳定版（编译修正）
 // =============================================================
 
 #import <UIKit/UIKit.h>
 #import <substrate.h>
 
-// 全局变量
 static UIWindow *floatWindow = nil;
 static UIButton *floatButton = nil;
 static BOOL isFloatingVisible = YES;
 
-// =============================================================
-// 三指双击手势（同时添加到所有窗口）
-// =============================================================
+// 三指双击切换
 static void toggleFloatingVisibility(void) {
     isFloatingVisible = !isFloatingVisible;
     floatWindow.hidden = !isFloatingVisible;
@@ -23,12 +17,11 @@ static void toggleFloatingVisibility(void) {
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-// 在 UIWindow 初始化时添加手势（覆盖后续创建的 window）
+// 在 UIWindow 初始化时添加手势
 %hook UIWindow
 - (instancetype)initWithFrame:(CGRect)frame {
     self = %orig;
     if (self) {
-        // 检查是否已添加过手势，避免重复
         static dispatch_once_t onceToken;
         dispatch_once(&onceToken, ^{
             UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(artemis_handleTripleTap:)];
@@ -52,9 +45,7 @@ static void toggleFloatingVisibility(void) {
 }
 %end
 
-// =============================================================
 // 浮窗事件处理
-// =============================================================
 @interface FloatHandler : NSObject
 + (instancetype)sharedInstance;
 - (void)buttonTapped;
@@ -86,11 +77,11 @@ static void toggleFloatingVisibility(void) {
 }
 
 - (void)buttonTapped {
-    // 隐藏浮窗，避免遮挡
+    // 隐藏浮窗
     floatWindow.hidden = YES;
     
-    // 创建专用窗口显示弹窗，避免影响游戏主窗口布局
-    UIWindow *alertWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    // 创建专用窗口显示弹窗
+    __block UIWindow *alertWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     alertWindow.windowLevel = UIWindowLevelAlert + 1;
     alertWindow.backgroundColor = [UIColor clearColor];
     alertWindow.hidden = NO;
@@ -103,18 +94,15 @@ static void toggleFloatingVisibility(void) {
                                                                    message:@"确定要退出程序吗？"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
-        // 取消时恢复浮窗
         alertWindow.hidden = YES;
         alertWindow.rootViewController = nil;
         alertWindow = nil;
         floatWindow.hidden = !isFloatingVisible;
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        // 清理窗口后强制退出
         alertWindow.hidden = YES;
         alertWindow.rootViewController = nil;
         alertWindow = nil;
-        // 直接终止进程（不会被游戏捕获）
         kill(getpid(), SIGKILL);
     }]];
     
@@ -123,7 +111,6 @@ static void toggleFloatingVisibility(void) {
 }
 
 - (void)buttonLongPressed {
-    // 长按直接强制退出
     kill(getpid(), SIGKILL);
 }
 
@@ -179,7 +166,6 @@ static void initialize() {
             [defaults synchronize];
         }
         
-        // 猫爪图标
         UIImage *pawImage = [UIImage imageNamed:@"catpaw"];
         if (!pawImage) {
             pawImage = [UIImage systemImageNamed:@"paw.fill"];
@@ -193,7 +179,6 @@ static void initialize() {
             }
         }
         
-        // 创建浮窗
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
         floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
         floatWindow.backgroundColor = [UIColor clearColor];
@@ -210,7 +195,6 @@ static void initialize() {
         floatButton.backgroundColor = [UIColor clearColor];
         floatButton.userInteractionEnabled = YES;
         
-        // 玻璃效果
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
         UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         blurView.frame = floatButton.bounds;
@@ -249,7 +233,6 @@ static void initialize() {
         
         [floatWindow addSubview:floatButton];
         
-        // 恢复位置
         CGFloat cx = [defaults floatForKey:@"pawButtonCenterX"];
         CGFloat cy = [defaults floatForKey:@"pawButtonCenterY"];
         CGRect screenBounds = [UIScreen mainScreen].bounds;
@@ -266,11 +249,11 @@ static void initialize() {
             [floatWindow makeKeyAndVisible];
         }
         
-        // 向所有已有窗口添加三指双击手势（覆盖主窗口）
+        // 向已有窗口添加三指双击手势
         for (UIWindow *window in [UIApplication sharedApplication].windows) {
-            // 检查是否已添加过手势（通过手势数量简单判断）
             if (window.gestureRecognizers.count == 0) {
-                UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(artemis_handleTripleTap:)];
+                // 手势的 target 设为 window 自身，因为 artemis_handleTripleTap: 是 UIWindow 的实例方法
+                UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:window action:@selector(artemis_handleTripleTap:)];
                 gesture.numberOfTouchesRequired = 3;
                 gesture.numberOfTapsRequired = 2;
                 [window addGestureRecognizer:gesture];
