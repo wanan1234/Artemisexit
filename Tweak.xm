@@ -1,9 +1,6 @@
 // =============================================================
-//  ArtemisAutoQuit — 三指双击切换浮窗（基于HongGuoFullScreen逻辑）
-//  功能：完全采用“红果/番茄”类插件的标准手势实现方式
-//        手势参数：三指 (numberOfTouchesRequired = 3)
-//                 双击 (numberOfTapsRequired = 2)
-//  机制：在UIWindow初始化时添加手势，target为self，确保稳定性
+//  ArtemisAutoQuit — 最终版
+//  功能：猫爪浮窗 + 三指双击切换 + 原生弹窗（带毛玻璃）
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -14,7 +11,9 @@ static UIWindow *floatWindow = nil;
 static UIButton *floatButton = nil;
 static BOOL isFloatingVisible = YES;
 
-// 手势触发函数
+// =============================================================
+// 三指双击手势（参考红果的双指实现，改为三指）
+// =============================================================
 static void toggleFloatingVisibility(void) {
     isFloatingVisible = !isFloatingVisible;
     floatWindow.hidden = !isFloatingVisible;
@@ -22,16 +21,13 @@ static void toggleFloatingVisibility(void) {
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-// =============================================================
-// 参考HongGuoFullScreen：Hook UIWindow，在initWithFrame:中添加手势
-// =============================================================
+// Hook UIWindow 添加三指双击手势
 %hook UIWindow
 - (instancetype)initWithFrame:(CGRect)frame {
     self = %orig;
     if (self) {
-        // 创建三指双击手势，target为self
-        UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(artemis_handleTripleDoubleTap:)];
-        gesture.numberOfTouchesRequired = 3;  // 三指
+        UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(artemis_handleTripleTap:)];
+        gesture.numberOfTouchesRequired = 3;  // 三指（你要的）
         gesture.numberOfTapsRequired = 2;     // 双击
         [self addGestureRecognizer:gesture];
         NSLog(@"[ArtemisAutoQuit] 三指双击手势已添加");
@@ -39,10 +35,8 @@ static void toggleFloatingVisibility(void) {
     return self;
 }
 %new
-- (void)artemis_handleTripleDoubleTap:(UITapGestureRecognizer *)gesture {
-    // 当手势被识别时，触发切换浮窗
+- (void)artemis_handleTripleTap:(UITapGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateRecognized) {
-        // 触感反馈（可选）
         if (@available(iOS 10.0, *)) {
             [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
         }
@@ -53,17 +47,47 @@ static void toggleFloatingVisibility(void) {
 %end
 
 // =============================================================
-// 浮窗主功能（点击退出、长按强退、拖拽等）
+// 浮窗 + 原生弹窗
 // =============================================================
 
-// 按钮事件处理类
+// 使用专用窗口显示原生 UIAlertController（带毛玻璃效果）
+static void showNativeAlert(NSString *title, NSString *message) {
+    // 创建一个层级最高的窗口来承载弹窗
+    UIWindow *alertWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    alertWindow.windowLevel = UIWindowLevelAlert + 1;
+    alertWindow.backgroundColor = [UIColor clearColor];
+    alertWindow.hidden = NO;
+    
+    UIViewController *rootVC = [[UIViewController alloc] init];
+    rootVC.view.backgroundColor = [UIColor clearColor];
+    alertWindow.rootViewController = rootVC;
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+        alertWindow.hidden = YES;
+        alertWindow.rootViewController = nil;
+        alertWindow = nil;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        alertWindow.hidden = YES;
+        alertWindow.rootViewController = nil;
+        alertWindow = nil;
+        exit(0);
+    }]];
+    
+    [rootVC presentViewController:alert animated:YES completion:nil];
+    [alertWindow makeKeyAndVisible];
+}
+
+// 浮窗事件处理
 @interface FloatHandler : NSObject
 + (instancetype)sharedInstance;
 - (void)buttonTapped;
 - (void)buttonLongPressed;
 - (void)handlePan:(UIPanGestureRecognizer *)pan;
 - (void)updateWindowFrame;
-- (void)showQuitAlert;
 @end
 
 @implementation FloatHandler
@@ -77,40 +101,13 @@ static void toggleFloatingVisibility(void) {
     return instance;
 }
 
-- (void)showQuitAlert {
-    UIViewController *topVC = [self topViewController];
-    if (!topVC) {
-        exit(0);
-        return;
-    }
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出程序"
-                                                                   message:@"确定要退出程序吗？"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        exit(0);
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    
-    [topVC presentViewController:alert animated:YES completion:nil];
-}
-
 - (void)buttonTapped {
-    [self showQuitAlert];
+    // 点击浮窗 -> 显示原生弹窗（带毛玻璃效果）
+    showNativeAlert(@"退出程序", @"确定要退出程序吗？");
 }
 
 - (void)buttonLongPressed {
-    exit(0);
-}
-
-- (UIViewController *)topViewController {
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    if (!keyWindow) return nil;
-    UIViewController *topVC = keyWindow.rootViewController;
-    while (topVC.presentedViewController) {
-        topVC = topVC.presentedViewController;
-    }
-    return topVC;
+    exit(0);  // 长按直接退出
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -156,7 +153,6 @@ static void toggleFloatingVisibility(void) {
 __attribute__((constructor))
 static void initialize() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        // 恢复显示状态
         NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
         if ([defaults objectForKey:@"floatingVisible"]) {
             isFloatingVisible = [defaults boolForKey:@"floatingVisible"];
@@ -180,7 +176,7 @@ static void initialize() {
             }
         }
         
-        // 创建浮窗 (40x40)
+        // 创建浮窗
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
         floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
         floatWindow.backgroundColor = [UIColor clearColor];
