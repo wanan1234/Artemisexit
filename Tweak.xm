@@ -1,8 +1,5 @@
 // =============================================================
-//  ArtemisAutoQuit — CADisplayLink 帧率监控版
-//  功能：当 CADisplayLink 回调停止超过3秒，自动退出 App
-//  适用：Artemis 引擎游戏
-//  日志：详细记录启动、帧更新和超时检测
+//  ArtemisAutoQuit — CADisplayLink 帧率监控版（修正编译错误）
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -45,12 +42,7 @@ static NSTimeInterval lastFrameTime = 0;
 static BOOL isDisplayLinkActive = NO;
 static BOOL shouldExit = NO;
 
-// CADisplayLink 回调
-static void onFrame(CFRunLoopTimerRef timer, void *info) {
-    // 这个方法不会被 CADisplayLink 使用，这里仅作为占位
-}
-
-// 使用 CADisplayLink 的回调方法（通过 NSObject 的 selector 方式）
+// 使用 CADisplayLink 的回调类
 @interface DisplayLinkTarget : NSObject
 @end
 
