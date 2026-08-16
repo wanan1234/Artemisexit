@@ -1,7 +1,7 @@
 // =============================================================
-//  ArtemisAutoQuit — 猫爪浮窗 + 抽屉菜单版（修正编译错误）
-//  功能：玻璃质感猫爪浮窗，点击后弹出圆形确定/取消按钮
-//  图标：使用本地 catpaw.png
+//  ArtemisAutoQuit — 返回+退出抽屉菜单版
+//  功能：猫爪浮窗，点击后弹出返回/退出按钮
+//  适配：横竖屏自动适配，位置不跑偏
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -15,9 +15,8 @@ static BOOL isDragging = NO;
 
 // 抽屉相关
 static UIWindow *drawerWindow = nil;
-static UIView *drawerBackground = nil;
-static UIButton *confirmButton = nil;
-static UIButton *cancelButton = nil;
+static UIButton *backButton = nil;     // 返回按钮
+static UIButton *quitButton = nil;     // 退出按钮
 static BOOL isDrawerVisible = NO;
 
 // 按钮事件处理类
@@ -27,7 +26,8 @@ static BOOL isDrawerVisible = NO;
 - (void)updateWindowFrame;
 - (void)showDrawer;
 - (void)hideDrawer;
-- (void)confirmQuit;
+- (void)triggerBack;
+- (void)triggerQuit;
 @end
 
 @implementation FloatButtonTarget
@@ -44,6 +44,7 @@ static BOOL isDrawerVisible = NO;
     if (isDrawerVisible) return;
     isDrawerVisible = YES;
     
+    // 创建抽屉窗口
     if (!drawerWindow) {
         drawerWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
         drawerWindow.windowLevel = UIWindowLevelAlert + 1;
@@ -59,95 +60,114 @@ static BOOL isDrawerVisible = NO;
         [rootVC.view addGestureRecognizer:tap];
     }
     
+    // 获取当前屏幕尺寸（支持横竖屏）
+    CGRect screenBounds = [UIScreen mainScreen].bounds;
     CGPoint floatCenter = floatWindow.center;
-    CGFloat buttonSize = 50;
-    CGFloat spacing = 20;
+    CGFloat buttonSize = 36; // 比浮窗稍小 (浮窗40)
+    CGFloat spacing = 12;
     
-    // 决定按钮显示在浮窗上方还是下方
-    BOOL showAbove = (floatCenter.y - 80 > 0);
-    CGFloat yOffset = showAbove ? - (buttonSize + spacing) : (buttonSize + spacing);
+    // 计算两个按钮的位置（水平排列在浮窗上方）
+    // 返回按钮在左，退出按钮在右
+    BOOL showAbove = (floatCenter.y - 60 > 0);
+    CGFloat yOffset = showAbove ? -(buttonSize + spacing) : (buttonSize + spacing);
     
-    CGPoint confirmCenter = CGPointMake(floatCenter.x, floatCenter.y + yOffset);
-    CGPoint cancelCenter = CGPointMake(floatCenter.x, floatCenter.y + yOffset + (showAbove ? -(buttonSize + spacing) : (buttonSize + spacing)));
+    CGPoint backCenter = CGPointMake(floatCenter.x - buttonSize/2 - spacing/2, floatCenter.y + yOffset);
+    CGPoint quitCenter = CGPointMake(floatCenter.x + buttonSize/2 + spacing/2, floatCenter.y + yOffset);
     
-    // 确认按钮（红色 ✓）
-    confirmButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    confirmButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
-    confirmButton.center = confirmCenter;
-    confirmButton.backgroundColor = [UIColor clearColor];
-    confirmButton.layer.cornerRadius = buttonSize/2;
-    confirmButton.clipsToBounds = YES;
-    confirmButton.userInteractionEnabled = YES;
-    [confirmButton addTarget:self action:@selector(confirmQuit) forControlEvents:UIControlEventTouchUpInside];
+    // 确保按钮不超出屏幕边界（水平方向）
+    CGFloat halfWidth = buttonSize/2;
+    backCenter.x = MAX(halfWidth + 10, MIN(backCenter.x, screenBounds.size.width - halfWidth - 10));
+    quitCenter.x = MAX(halfWidth + 10, MIN(quitCenter.x, screenBounds.size.width - halfWidth - 10));
     
+    // 如果上方空间不足，下方空间也不足，强行放在浮窗上方（偏上）
+    if (yOffset < 0 && floatCenter.y - 60 < 0) {
+        backCenter.y = 50;
+        quitCenter.y = 50;
+    }
+    
+    // --- 返回按钮（←）---
+    backButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    backButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
+    backButton.center = backCenter;
+    backButton.backgroundColor = [UIColor clearColor];
+    backButton.layer.cornerRadius = buttonSize/2;
+    backButton.clipsToBounds = YES;
+    backButton.userInteractionEnabled = YES;
+    [backButton addTarget:self action:@selector(triggerBack) forControlEvents:UIControlEventTouchUpInside];
+    
+    // 毛玻璃效果
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
     UIVisualEffectView *blurViewBtn = [[UIVisualEffectView alloc] initWithEffect:blur];
-    blurViewBtn.frame = confirmButton.bounds;
+    blurViewBtn.frame = backButton.bounds;
     blurViewBtn.layer.cornerRadius = buttonSize/2;
     blurViewBtn.clipsToBounds = YES;
     blurViewBtn.userInteractionEnabled = NO;
-    [confirmButton addSubview:blurViewBtn];
+    [backButton addSubview:blurViewBtn];
     
-    UIView *tint = [[UIView alloc] initWithFrame:confirmButton.bounds];
-    tint.backgroundColor = [UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:0.4];
+    // 蓝色遮罩
+    UIView *tint = [[UIView alloc] initWithFrame:backButton.bounds];
+    tint.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:0.4];
     tint.layer.cornerRadius = buttonSize/2;
     tint.clipsToBounds = YES;
     tint.userInteractionEnabled = NO;
-    [confirmButton addSubview:tint];
+    [backButton addSubview:tint];
     
-    UILabel *label = [[UILabel alloc] initWithFrame:confirmButton.bounds];
-    label.text = @"✓";
+    // ← 图标
+    UILabel *label = [[UILabel alloc] initWithFrame:backButton.bounds];
+    label.text = @"←";
     label.textColor = [UIColor whiteColor];
-    label.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
+    label.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
     label.textAlignment = NSTextAlignmentCenter;
     label.userInteractionEnabled = NO;
-    [confirmButton addSubview:label];
+    [backButton addSubview:label];
     
-    confirmButton.layer.shadowColor = [UIColor blackColor].CGColor;
-    confirmButton.layer.shadowOffset = CGSizeMake(0, 2);
-    confirmButton.layer.shadowRadius = 8;
-    confirmButton.layer.shadowOpacity = 0.3;
+    backButton.layer.shadowColor = [UIColor blackColor].CGColor;
+    backButton.layer.shadowOffset = CGSizeMake(0, 2);
+    backButton.layer.shadowRadius = 6;
+    backButton.layer.shadowOpacity = 0.3;
     
-    // 取消按钮（灰色 ✕）
-    cancelButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    cancelButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
-    cancelButton.center = cancelCenter;
-    cancelButton.backgroundColor = [UIColor clearColor];
-    cancelButton.layer.cornerRadius = buttonSize/2;
-    cancelButton.clipsToBounds = YES;
-    cancelButton.userInteractionEnabled = YES;
-    [cancelButton addTarget:self action:@selector(hideDrawer) forControlEvents:UIControlEventTouchUpInside];
+    // --- 退出按钮（✓）---
+    quitButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    quitButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
+    quitButton.center = quitCenter;
+    quitButton.backgroundColor = [UIColor clearColor];
+    quitButton.layer.cornerRadius = buttonSize/2;
+    quitButton.clipsToBounds = YES;
+    quitButton.userInteractionEnabled = YES;
+    [quitButton addTarget:self action:@selector(triggerQuit) forControlEvents:UIControlEventTouchUpInside];
     
     UIBlurEffect *blur2 = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
     UIVisualEffectView *blurViewBtn2 = [[UIVisualEffectView alloc] initWithEffect:blur2];
-    blurViewBtn2.frame = cancelButton.bounds;
+    blurViewBtn2.frame = quitButton.bounds;
     blurViewBtn2.layer.cornerRadius = buttonSize/2;
     blurViewBtn2.clipsToBounds = YES;
     blurViewBtn2.userInteractionEnabled = NO;
-    [cancelButton addSubview:blurViewBtn2];
+    [quitButton addSubview:blurViewBtn2];
     
-    UIView *tint2 = [[UIView alloc] initWithFrame:cancelButton.bounds];
-    tint2.backgroundColor = [UIColor colorWithWhite:0.5 alpha:0.3];
+    // 红色遮罩
+    UIView *tint2 = [[UIView alloc] initWithFrame:quitButton.bounds];
+    tint2.backgroundColor = [UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:0.4];
     tint2.layer.cornerRadius = buttonSize/2;
     tint2.clipsToBounds = YES;
     tint2.userInteractionEnabled = NO;
-    [cancelButton addSubview:tint2];
+    [quitButton addSubview:tint2];
     
-    UILabel *label2 = [[UILabel alloc] initWithFrame:cancelButton.bounds];
-    label2.text = @"✕";
+    UILabel *label2 = [[UILabel alloc] initWithFrame:quitButton.bounds];
+    label2.text = @"✓";
     label2.textColor = [UIColor whiteColor];
-    label2.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
+    label2.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
     label2.textAlignment = NSTextAlignmentCenter;
     label2.userInteractionEnabled = NO;
-    [cancelButton addSubview:label2];
+    [quitButton addSubview:label2];
     
-    cancelButton.layer.shadowColor = [UIColor blackColor].CGColor;
-    cancelButton.layer.shadowOffset = CGSizeMake(0, 2);
-    cancelButton.layer.shadowRadius = 8;
-    cancelButton.layer.shadowOpacity = 0.3;
+    quitButton.layer.shadowColor = [UIColor blackColor].CGColor;
+    quitButton.layer.shadowOffset = CGSizeMake(0, 2);
+    quitButton.layer.shadowRadius = 6;
+    quitButton.layer.shadowOpacity = 0.3;
     
-    [drawerWindow.rootViewController.view addSubview:confirmButton];
-    [drawerWindow.rootViewController.view addSubview:cancelButton];
+    // 添加到抽屉窗口
+    [drawerWindow.rootViewController.view addSubview:backButton];
+    [drawerWindow.rootViewController.view addSubview:quitButton];
     drawerWindow.hidden = NO;
 }
 
@@ -155,18 +175,82 @@ static BOOL isDrawerVisible = NO;
     isDrawerVisible = NO;
     if (drawerWindow) {
         drawerWindow.hidden = YES;
-        [confirmButton removeFromSuperview];
-        [cancelButton removeFromSuperview];
-        confirmButton = nil;
-        cancelButton = nil;
+        [backButton removeFromSuperview];
+        [quitButton removeFromSuperview];
+        backButton = nil;
+        quitButton = nil;
     }
 }
 
-- (void)confirmQuit {
+- (void)triggerBack {
+    // 触发 iOS 系统的右滑返回手势
+    UIViewController *topVC = [self getTopViewController];
+    if (!topVC) {
+        [self hideDrawer];
+        return;
+    }
+    
+    // 方法1：如果是在 NavigationController 中，直接 pop
+    if (topVC.navigationController && topVC.navigationController.viewControllers.count > 1) {
+        [topVC.navigationController popViewControllerAnimated:YES];
+        [self hideDrawer];
+        return;
+    }
+    
+    // 方法2：模拟从右向左的滑动手势（从左边缘滑动）
+    // 通过发送一个系统手势事件来触发返回
+    // 利用运行时获取 interactivePopGestureRecognizer 并触发
+    if (topVC.navigationController) {
+        UIGestureRecognizer *gesture = topVC.navigationController.interactivePopGestureRecognizer;
+        if (gesture) {
+            // 模拟手势触发
+            [topVC.navigationController popViewControllerAnimated:YES];
+            [self hideDrawer];
+            return;
+        }
+    }
+    
+    // 方法3：如果当前是 presented ViewController，则 dismiss
+    if (topVC.presentingViewController) {
+        [topVC dismissViewControllerAnimated:YES completion:nil];
+        [self hideDrawer];
+        return;
+    }
+    
     [self hideDrawer];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+}
+
+- (void)triggerQuit {
+    // 显示退出确认对话框
+    UIViewController *topVC = [self getTopViewController];
+    if (!topVC) {
         exit(0);
-    });
+        return;
+    }
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出游戏"
+                                                                   message:@"确定要退出游戏吗？"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        [self hideDrawer];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            exit(0);
+        });
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    
+    [topVC presentViewController:alert animated:YES completion:nil];
+}
+
+- (UIViewController *)getTopViewController {
+    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    if (!keyWindow) return nil;
+    
+    UIViewController *topVC = keyWindow.rootViewController;
+    while (topVC.presentedViewController) {
+        topVC = topVC.presentedViewController;
+    }
+    return topVC;
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -343,6 +427,6 @@ static void initialize() {
             if (isDrawerVisible) [target hideDrawer];
         }];
         
-        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗 + 抽屉菜单已加载");
+        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗 + 返回/退出菜单已加载");
     });
 }
