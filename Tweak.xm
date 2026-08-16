@@ -1,7 +1,7 @@
 // =============================================================
-//  ArtemisAutoQuit — 浮窗手动退出版
-//  功能：在游戏上方显示一个可拖拽的浮窗，点击弹出退出确认
-//  适用：所有 Artemis 引擎游戏
+//  ArtemisAutoQuit — 悬浮退出按钮版
+//  功能：在游戏界面上添加一个可拖动的“退出”按钮，点击后弹出确认框，确定后退出 App
+//  适用：所有 iOS 应用（无侵入性）
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -9,166 +9,147 @@
 
 static UIWindow *floatWindow = nil;
 static UIButton *floatButton = nil;
-static UIPanGestureRecognizer *panGesture = nil;
+static BOOL isDragging = NO;
 
-static void WriteLog(NSString *format, ...) {
-    va_list args;
-    va_start(args, format);
-    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
-    va_end(args);
+// 按钮事件处理类
+@interface FloatButtonTarget : NSObject
+- (void)buttonTapped;
+- (void)handlePan:(UIPanGestureRecognizer *)pan;
+@end
 
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *docPath = [paths firstObject];
-    NSString *logPath = [docPath stringByAppendingPathComponent:@"AutoQuit.log"];
+@implementation FloatButtonTarget
 
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:docPath]) {
-        [fm createDirectoryAtPath:docPath withIntermediateDirectories:YES attributes:nil error:nil];
-    }
-
-    NSDateFormatter *df = [[NSDateFormatter alloc] init];
-    df.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
-    NSString *timestamp = [df stringFromDate:[NSDate date]];
-    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", timestamp, msg];
-
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
-    if (!fh) {
-        [line writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    } else {
-        [fh seekToEndOfFile];
-        [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-        [fh closeFile];
-    }
-    NSLog(@"[ArtemisAutoQuit] %@", msg);
-}
-
-// 处理拖拽
-static void handlePan(UIPanGestureRecognizer *gesture) {
-    if (gesture.state == UIGestureRecognizerStateChanged) {
-        CGPoint translation = [gesture translationInView:gesture.view.superview];
-        gesture.view.center = CGPointMake(gesture.view.center.x + translation.x,
-                                          gesture.view.center.y + translation.y);
-        [gesture setTranslation:CGPointZero inView:gesture.view.superview];
-    }
-}
-
-// 退出确认对话框
-static void showQuitAlert(void) {
-    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
-    if (!rootVC) return;
-
+- (void)buttonTapped {
+    // 显示退出确认对话框
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出游戏"
-                                                                   message:@"确定要退出当前游戏吗？"
+                                                                   message:@"确定要退出游戏吗？"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        WriteLog(@"用户确认退出，调用 exit(0)");
+        // 退出 App
         exit(0);
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [rootVC presentViewController:alert animated:YES completion:nil];
+    
+    UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+    if (root) {
+        [root presentViewController:alert animated:YES completion:nil];
+    }
 }
 
-// 创建浮窗
-static void createFloatButton(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (floatWindow) return;
+- (void)handlePan:(UIPanGestureRecognizer *)pan {
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        isDragging = YES;
+    } else if (pan.state == UIGestureRecognizerStateChanged) {
+        CGPoint translation = [pan translationInView:floatWindow];
+        CGRect frame = floatWindow.frame;
+        frame.origin.x += translation.x;
+        frame.origin.y += translation.y;
+        
+        // 限制在屏幕范围内
+        CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+        CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
+        frame.origin.x = MAX(0, MIN(frame.origin.x, screenWidth - frame.size.width));
+        frame.origin.y = MAX(0, MIN(frame.origin.y, screenHeight - frame.size.height));
+        
+        floatWindow.frame = frame;
+        [pan setTranslation:CGPointZero inView:floatWindow];
+    } else if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        isDragging = NO;
+        // 保存位置
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        [defaults setFloat:floatWindow.frame.origin.x forKey:@"floatButtonX"];
+        [defaults setFloat:floatWindow.frame.origin.y forKey:@"floatButtonY"];
+        [defaults synchronize];
+    }
+}
 
-        // 创建一个 UIWindow 来显示浮窗（确保在所有视图之上）
+@end
+
+static FloatButtonTarget *target = nil;
+
+// 保存位置函数
+static void saveFloatButtonPosition(void) {
+    if (floatWindow) {
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        [defaults setFloat:floatWindow.frame.origin.x forKey:@"floatButtonX"];
+        [defaults setFloat:floatWindow.frame.origin.y forKey:@"floatButtonY"];
+        [defaults synchronize];
+    }
+}
+
+// 初始化
+__attribute__((constructor))
+static void initialize() {
+    // 延迟执行，确保 App 已完全启动
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        target = [[FloatButtonTarget alloc] init];
+        
+        // 创建浮动窗口
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 60, 60)];
         floatWindow.windowLevel = UIWindowLevelAlert + 1;
         floatWindow.backgroundColor = [UIColor clearColor];
         floatWindow.userInteractionEnabled = YES;
-
+        floatWindow.hidden = NO;
+        
         // 创建按钮
         floatButton = [UIButton buttonWithType:UIButtonTypeCustom];
         floatButton.frame = CGRectMake(0, 0, 60, 60);
-        floatButton.backgroundColor = [UIColor systemBlueColor];
-        floatButton.layer.cornerRadius = 30;
-        floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
-        floatButton.layer.shadowOffset = CGSizeMake(0, 2);
-        floatButton.layer.shadowRadius = 4;
-        floatButton.layer.shadowOpacity = 0.5;
         [floatButton setTitle:@"退出" forState:UIControlStateNormal];
         [floatButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        floatButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-
-        // 添加点击事件
-        [floatButton addTarget:nil action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
-        // 由于不能直接用 self，使用关联对象或全局函数，这里改为通过 Runtime 关联一个 block
-        // 简单做法：使用关联对象保存 block
-        void (^tapBlock)(void) = ^{
-            showQuitAlert();
-        };
-        objc_setAssociatedObject(floatButton, @selector(buttonTapped), tapBlock, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        [floatButton addTarget:self action:@selector(buttonTapped:) forControlEvents:UIControlEventTouchUpInside];
-        // 但实际上我们需要一个方法，可以创建一个轻量级的对象作为 target
-        // 另一种方案：使用 UIControl 的 addTarget 时 target 设为 nil，通过 UIApplication 发送 action
-        // 但我们这里直接采用另一种方式：使用一个静态方法
-        // 下面重构为使用 NSObject 的类别
-
-        // 为了简化，我们直接使用一个静态方法作为 target
-        // 但因为需要传参，我们用 block 方式，但 addTarget 不支持 block
-        // 所以采用以下方式：
-        // 方案：创建一个动态的 target 对象
-
-        // 实际实现时，我们定义一个内部类来处理
-        // 但为了代码简洁，这里使用一个全局的 target 实例
-        // 已经定义了一个全局对象来接收事件
-        // 下面我们使用一个简单的单例来处理
-
-        // 重新设计：
-        // 由于上面代码复杂，我们换一种更简单的方式：不使用 addTarget，而是直接在按钮上添加一个点击手势
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:nil action:@selector(handleTap:)];
-        // 无法用 nil，需要指定 target
-        // 我们最终使用一个全局的 target 对象
-
-        // 为了避免过多改动，我们重新编写整个逻辑：
-
-        // 删掉上面的，直接使用一个明确的 target
-        // 定义一个内部类来处理事件
-        // 但这里我们直接用 runtime 动态生成一个类
-
-        // 最简单的做法：在 initialize 中创建一个 UIViewController 作为 root，或者直接在 UIWindow 上添加一个 UIControl 子类
-        // 我决定重新整理代码
-
-        // 为了快速解决问题，我提供一个修正版，使用一个全局的 target 对象
-        static id eventTarget = nil;
-        if (!eventTarget) {
-            eventTarget = [[NSObject alloc] init];
-            // 动态添加方法
-            class_addMethod([eventTarget class], @selector(buttonTapped), (IMP)buttonTappedIMP, "v@:");
-            class_addMethod([eventTarget class], @selector(handlePan:), (IMP)handlePanIMP, "v@:@");
-        }
-        [floatButton addTarget:eventTarget action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
-        // 添加拖拽手势
-        panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:eventTarget action:@selector(handlePan:)];
-        [floatButton addGestureRecognizer:panGesture];
-
+        [floatButton setBackgroundColor:[UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:0.85]];
+        floatButton.layer.cornerRadius = 30;
+        floatButton.clipsToBounds = YES;
+        floatButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        [floatButton addTarget:target action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
+        
+        // 添加拖动手势
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:target action:@selector(handlePan:)];
+        [floatButton addGestureRecognizer:pan];
+        
         [floatWindow addSubview:floatButton];
+        floatWindow.rootViewController = [[UIViewController alloc] init];
+        floatWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
+        floatWindow.userInteractionEnabled = YES;
+        
+        // 恢复保存的位置
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        CGFloat x = [defaults floatForKey:@"floatButtonX"];
+        CGFloat y = [defaults floatForKey:@"floatButtonY"];
+        CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+        CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
+        if (x != 0 || y != 0) {
+            // 确保在屏幕内
+            x = MAX(0, MIN(x, screenWidth - 60));
+            y = MAX(0, MIN(y, screenHeight - 60));
+            floatWindow.frame = CGRectMake(x, y, 60, 60);
+        } else {
+            // 默认在右上角
+            floatWindow.frame = CGRectMake(screenWidth - 80, 100, 60, 60);
+        }
+        
+        // 显示
         floatWindow.hidden = NO;
-        WriteLog(@"✅ 浮窗已创建并显示");
+        [floatWindow makeKeyAndVisible];
+        
+        // 监听应用回到前台，确保浮窗在最上层
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification *note) {
+            if (floatWindow) {
+                floatWindow.windowLevel = UIWindowLevelAlert + 1;
+                [floatWindow makeKeyAndVisible];
+            }
+        }];
+        
+        // 监听进入后台时保存位置
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification *note) {
+            saveFloatButtonPosition();
+        }];
+        
+        NSLog(@"[ArtemisAutoQuit] 悬浮按钮已加载，位置已恢复");
     });
-}
-
-// IMP 函数实现
-static void buttonTappedIMP(id self, SEL _cmd) {
-    showQuitAlert();
-}
-
-static void handlePanIMP(id self, SEL _cmd, UIPanGestureRecognizer *gesture) {
-    handlePan(gesture);
-}
-
-// 构造函数
-__attribute__((constructor))
-static void initialize() {
-    WriteLog(@"===== ArtemisAutoQuit 浮窗版加载 =====");
-    WriteLog(@"Bundle ID: %@", [[NSBundle mainBundle] bundleIdentifier]);
-
-    // 延迟创建浮窗，确保应用窗口已准备好
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        createFloatButton();
-    });
-
-    WriteLog(@"📁 日志路径: %@/AutoQuit.log", [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject]);
 }
