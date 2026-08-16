@@ -1,7 +1,7 @@
 // =============================================================
-//  ArtemisAutoQuit — 精致猫爪浮窗版
-//  功能：在游戏界面上添加一个超小玻璃质感猫爪按钮，点击后弹出确认框退出 App
-//  特性：尺寸 40x40，清晰粉嫩猫爪图标，玻璃效果，支持横屏，位置记忆，无文字
+//  ArtemisAutoQuit — 猫爪浮窗 + 抽屉菜单版
+//  功能：玻璃质感猫爪浮窗，点击后弹出圆形确定/取消按钮
+//  图标：使用本地 catpaw.png
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -13,54 +13,175 @@ static UIVisualEffectView *blurView = nil;
 static UIImageView *pawImageView = nil;
 static BOOL isDragging = NO;
 
+// 抽屉相关
+static UIWindow *drawerWindow = nil;
+static UIView *drawerBackground = nil;
+static UIButton *confirmButton = nil;
+static UIButton *cancelButton = nil;
+static BOOL isDrawerVisible = NO;
+
 // 按钮事件处理类
 @interface FloatButtonTarget : NSObject
 - (void)buttonTapped;
 - (void)handlePan:(UIPanGestureRecognizer *)pan;
 - (void)updateWindowFrame;
+- (void)showDrawer;
+- (void)hideDrawer;
+- (void)confirmQuit;
 @end
 
 @implementation FloatButtonTarget
 
 - (void)buttonTapped {
-    // 获取当前最顶层的 ViewController（避免弹窗方向错乱）
-    UIViewController *topVC = nil;
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    if (keyWindow) {
-        topVC = keyWindow.rootViewController;
-        while (topVC.presentedViewController) {
-            topVC = topVC.presentedViewController;
-        }
+    // 显示抽屉
+    if (isDrawerVisible) {
+        [self hideDrawer];
+    } else {
+        [self showDrawer];
     }
-    if (!topVC) {
-        // 备用：取任何可见 window 的 root
-        for (UIWindow *win in [UIApplication sharedApplication].windows) {
-            if (win.rootViewController && !win.hidden) {
-                topVC = win.rootViewController;
-                while (topVC.presentedViewController) {
-                    topVC = topVC.presentedViewController;
-                }
-                break;
-            }
-        }
-    }
-    if (!topVC) return;
+}
+
+- (void)showDrawer {
+    if (isDrawerVisible) return;
+    isDrawerVisible = YES;
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出游戏"
-                                                                   message:@"确定要退出游戏吗？"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+    if (!drawerWindow) {
+        // 创建抽屉窗口
+        drawerWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        drawerWindow.windowLevel = UIWindowLevelAlert + 1; // 在浮窗之上
+        drawerWindow.backgroundColor = [UIColor clearColor];
+        drawerWindow.userInteractionEnabled = YES;
+        drawerWindow.hidden = NO;
+        
+        UIViewController *rootVC = [[UIViewController alloc] init];
+        rootVC.view.backgroundColor = [UIColor clearColor];
+        drawerWindow.rootViewController = rootVC;
+        
+        // 点击背景关闭抽屉
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideDrawer)];
+        [rootVC.view addGestureRecognizer:tap];
+    }
+    
+    // 获取浮窗位置（相对于屏幕）
+    CGPoint floatCenter = floatWindow.center;
+    CGFloat buttonSize = 50;
+    CGFloat spacing = 20;
+    
+    // 确定按钮位置（浮窗上方或下方，优先上方，若上方空间不足则下方）
+    CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
+    BOOL showAbove = (floatCenter.y - 80 > 0); // 上方空间
+    CGFloat yOffset = showAbove ? - (buttonSize + spacing) : (buttonSize + spacing);
+    
+    CGPoint confirmCenter = CGPointMake(floatCenter.x, floatCenter.y + yOffset);
+    CGPoint cancelCenter = CGPointMake(floatCenter.x, floatCenter.y + yOffset + (showAbove ? -(buttonSize + spacing) : (buttonSize + spacing)));
+    
+    // 创建确认按钮（红色）
+    confirmButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    confirmButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
+    confirmButton.center = confirmCenter;
+    confirmButton.backgroundColor = [UIColor clearColor];
+    confirmButton.layer.cornerRadius = buttonSize/2;
+    confirmButton.clipsToBounds = YES;
+    confirmButton.userInteractionEnabled = YES;
+    [confirmButton addTarget:self action:@selector(confirmQuit) forControlEvents:UIControlEventTouchUpInside];
+    
+    // 毛玻璃效果
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    UIVisualEffectView *blurViewBtn = [[UIVisualEffectView alloc] initWithEffect:blur];
+    blurViewBtn.frame = confirmButton.bounds;
+    blurViewBtn.layer.cornerRadius = buttonSize/2;
+    blurViewBtn.clipsToBounds = YES;
+    blurViewBtn.userInteractionEnabled = NO;
+    [confirmButton addSubview:blurViewBtn];
+    
+    // 红色遮罩
+    UIView *tint = [[UIView alloc] initWithFrame:confirmButton.bounds];
+    tint.backgroundColor = [UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:0.4];
+    tint.layer.cornerRadius = buttonSize/2;
+    tint.clipsToBounds = YES;
+    tint.userInteractionEnabled = NO;
+    [confirmButton addSubview:tint];
+    
+    // “确定”文字
+    UILabel *label = [[UILabel alloc] initWithFrame:confirmButton.bounds];
+    label.text = @"✓";
+    label.textColor = [UIColor whiteColor];
+    label.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
+    label.textAlignment = NSTextAlignmentCenter;
+    label.userInteractionEnabled = NO;
+    [confirmButton addSubview:label];
+    
+    confirmButton.layer.shadowColor = [UIColor blackColor].CGColor;
+    confirmButton.layer.shadowOffset = CGSizeMake(0, 2);
+    confirmButton.layer.shadowRadius = 8;
+    confirmButton.layer.shadowOpacity = 0.3;
+    
+    // 创建取消按钮（灰色）
+    cancelButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    cancelButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
+    cancelButton.center = cancelCenter;
+    cancelButton.backgroundColor = [UIColor clearColor];
+    cancelButton.layer.cornerRadius = buttonSize/2;
+    cancelButton.clipsToBounds = YES;
+    cancelButton.userInteractionEnabled = YES;
+    [cancelButton addTarget:self action:@selector(hideDrawer) forControlEvents:UIControlEventTouchUpInside];
+    
+    UIBlurEffect *blur2 = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    UIVisualEffectView *blurViewBtn2 = [[UIVisualEffectView alloc] initWithEffect:blur2];
+    blurViewBtn2.frame = cancelButton.bounds;
+    blurViewBtn2.layer.cornerRadius = buttonSize/2;
+    blurViewBtn2.clipsToBounds = YES;
+    blurViewBtn2.userInteractionEnabled = NO;
+    [cancelButton addSubview:blurViewBtn2];
+    
+    UIView *tint2 = [[UIView alloc] initWithFrame:cancelButton.bounds];
+    tint2.backgroundColor = [UIColor colorWithWhite:0.5 alpha:0.3];
+    tint2.layer.cornerRadius = buttonSize/2;
+    tint2.clipsToBounds = YES;
+    tint2.userInteractionEnabled = NO;
+    [cancelButton addSubview:tint2];
+    
+    UILabel *label2 = [[UILabel alloc] initWithFrame:cancelButton.bounds];
+    label2.text = @"✕";
+    label2.textColor = [UIColor whiteColor];
+    label2.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
+    label2.textAlignment = NSTextAlignmentCenter;
+    label2.userInteractionEnabled = NO;
+    [cancelButton addSubview:label2];
+    
+    cancelButton.layer.shadowColor = [UIColor blackColor].CGColor;
+    cancelButton.layer.shadowOffset = CGSizeMake(0, 2);
+    cancelButton.layer.shadowRadius = 8;
+    cancelButton.layer.shadowOpacity = 0.3;
+    
+    // 添加到抽屉窗口
+    [drawerWindow.rootViewController.view addSubview:confirmButton];
+    [drawerWindow.rootViewController.view addSubview:cancelButton];
+    drawerWindow.hidden = NO;
+}
+
+- (void)hideDrawer {
+    isDrawerVisible = NO;
+    if (drawerWindow) {
+        drawerWindow.hidden = YES;
+        [confirmButton removeFromSuperview];
+        [cancelButton removeFromSuperview];
+        confirmButton = nil;
+        cancelButton = nil;
+    }
+}
+
+- (void)confirmQuit {
+    [self hideDrawer];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         exit(0);
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    
-    // 确保在正确的 ViewController 上 present，方向会自动适配
-    [topVC presentViewController:alert animated:YES completion:nil];
+    });
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
     if (pan.state == UIGestureRecognizerStateBegan) {
         isDragging = YES;
+        if (isDrawerVisible) [self hideDrawer];
         [UIView animateWithDuration:0.2 animations:^{
             floatButton.transform = CGAffineTransformMakeScale(1.2, 1.2);
         }];
@@ -97,6 +218,7 @@ static BOOL isDragging = NO;
     frame.origin.x = MAX(0, MIN(frame.origin.x, screenWidth - frame.size.width));
     frame.origin.y = MAX(0, MIN(frame.origin.y, screenHeight - frame.size.height));
     floatWindow.frame = frame;
+    if (isDrawerVisible) [self hideDrawer];
 }
 
 @end
@@ -117,9 +239,25 @@ static void initialize() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         target = [[FloatButtonTarget alloc] init];
         
-        // 创建浮窗 - 尺寸缩小至 40x40
+        // 加载本地猫爪图标
+        UIImage *pawImage = [UIImage imageNamed:@"catpaw"];
+        if (!pawImage) {
+            // 若未找到，使用 SF Symbol 作为后备
+            pawImage = [UIImage systemImageNamed:@"paw.fill"];
+            if (!pawImage) {
+                // 最终备：纯色方块
+                UIGraphicsBeginImageContext(CGSizeMake(22, 22));
+                [[UIColor colorWithRed:1.0 green:0.6 blue:0.6 alpha:1.0] setFill];
+                UIBezierPath *path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(0, 0, 22, 22)];
+                [path fill];
+                pawImage = UIGraphicsGetImageFromCurrentImageContext();
+                UIGraphicsEndImageContext();
+            }
+        }
+        
+        // 创建浮窗
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
-        floatWindow.windowLevel = UIWindowLevelStatusBar + 1; // 确保在最上层
+        floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
         floatWindow.backgroundColor = [UIColor clearColor];
         floatWindow.userInteractionEnabled = YES;
         floatWindow.hidden = NO;
@@ -134,45 +272,39 @@ static void initialize() {
         floatButton.frame = CGRectMake(0, 0, 40, 40);
         floatButton.backgroundColor = [UIColor clearColor];
         floatButton.userInteractionEnabled = YES;
-        floatButton.layer.masksToBounds = NO; // 允许阴影穿透
         
-        // 玻璃效果（模糊层）
+        // 玻璃效果
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
         blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         blurView.frame = floatButton.bounds;
-        blurView.layer.cornerRadius = 20; // 完全圆形
+        blurView.layer.cornerRadius = 20;
         blurView.clipsToBounds = YES;
         blurView.userInteractionEnabled = NO;
         [floatButton addSubview:blurView];
         
-        // 添加一个半透明粉色背景增强玻璃质感
+        // 半透明白色覆盖
         UIView *tintView = [[UIView alloc] initWithFrame:floatButton.bounds];
-        tintView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.3];
+        tintView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.2];
         tintView.layer.cornerRadius = 20;
         tintView.clipsToBounds = YES;
         tintView.userInteractionEnabled = NO;
         [floatButton addSubview:tintView];
         
-        // 猫爪图标 - 使用 SF Symbols，尺寸适配
-        UIImage *pawImage = [UIImage systemImageNamed:@"paw.fill"];
+        // 猫爪图标
         pawImageView = [[UIImageView alloc] initWithImage:pawImage];
-        pawImageView.tintColor = [UIColor colorWithRed:1.0 green:0.6 blue:0.6 alpha:1.0]; // 粉嫩色
         pawImageView.contentMode = UIViewContentModeScaleAspectFit;
-        // 图标大小调整为 22x22，居中
         pawImageView.frame = CGRectMake(9, 9, 22, 22);
         pawImageView.userInteractionEnabled = NO;
         [floatButton addSubview:pawImageView];
         
-        // 更清晰的阴影
+        // 阴影
         floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
         floatButton.layer.shadowOffset = CGSizeMake(0, 2);
         floatButton.layer.shadowRadius = 6;
         floatButton.layer.shadowOpacity = 0.25;
         
-        // 点击事件
+        // 事件
         [floatButton addTarget:target action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
-        
-        // 拖拽
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:target action:@selector(handlePan:)];
         [floatButton addGestureRecognizer:pan];
         
@@ -195,15 +327,15 @@ static void initialize() {
         floatWindow.hidden = NO;
         [floatWindow makeKeyAndVisible];
         
-        // 屏幕旋转
+        // 监听旋转和前后台
         [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification
                                                           object:nil
                                                            queue:[NSOperationQueue mainQueue]
                                                       usingBlock:^(NSNotification *note) {
             [target updateWindowFrame];
+            if (isDrawerVisible) [target hideDrawer];
         }];
         
-        // 回到前台重设层级
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
                                                           object:nil
                                                            queue:[NSOperationQueue mainQueue]
@@ -219,8 +351,9 @@ static void initialize() {
                                                            queue:[NSOperationQueue mainQueue]
                                                       usingBlock:^(NSNotification *note) {
             saveButtonPosition();
+            if (isDrawerVisible) [target hideDrawer];
         }];
         
-        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗已加载 (40x40)");
+        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗 + 抽屉菜单已加载");
     });
 }
