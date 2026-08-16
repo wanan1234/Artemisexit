@@ -1,11 +1,10 @@
 // =============================================================
-//  ArtemisAutoQuit — 诊断版
-//  功能：记录黑屏时的窗口层次，不自动退出
-//  日志：打印所有 windows 和 rootViewController
+//  ArtemisAutoQuit — 帧率检测版（修正）
 // =============================================================
 
 #import <UIKit/UIKit.h>
 #import <substrate.h>
+#import <QuartzCore/QuartzCore.h>
 
 static void WriteLog(NSString *format, ...) {
     va_list args;
@@ -35,86 +34,51 @@ static void WriteLog(NSString *format, ...) {
         [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
         [fh closeFile];
     }
-    NSLog(@"[ArtemisDiag] %@", msg);
+    NSLog(@"[ArtemisAutoQuit] %@", msg);
 }
 
-static void dumpWindowState(void) {
-    NSArray *windows = [UIApplication sharedApplication].windows;
-    WriteLog(@"📱 当前 windows 数量: %lu", (unsigned long)windows.count);
-    for (NSInteger i = 0; i < windows.count; i++) {
-        UIWindow *win = windows[i];
-        WriteLog(@"  Window[%ld]: frame=%@, hidden=%d, rootVC=%@, subviews=%lu",
-                 (long)i,
-                 NSStringFromCGRect(win.frame),
-                 win.hidden,
-                 win.rootViewController,
-                 (unsigned long)win.subviews.count);
-        if (win.rootViewController) {
-            WriteLog(@"    rootVC class: %@", NSStringFromClass([win.rootViewController class]));
-        }
-        for (UIView *sub in win.subviews) {
-            WriteLog(@"    ├─ %@ frame=%@ hidden=%d alpha=%.2f",
-                     NSStringFromClass([sub class]),
-                     NSStringFromCGRect(sub.frame),
-                     sub.hidden,
-                     sub.alpha);
+static NSTimeInterval lastFrameTime = 0;
+static CFRunLoopTimerRef timer = NULL;
+
+static void onFrame(CFRunLoopTimerRef timer, void *info) {
+    lastFrameTime = [[NSDate date] timeIntervalSince1970];
+}
+
+static void monitorThread(void) {
+    @autoreleasepool {
+        while (1) {
+            sleep(1);
+            NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+            NSTimeInterval diff = now - lastFrameTime;
+            WriteLog(@"⏱️ 帧间隔: %.2f 秒", diff);
+            if (diff > 3.0) {
+                WriteLog(@"⚠️ 渲染停止超过3秒，执行退出");
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    WriteLog(@"🔄 调用 exit(0)");
+                    exit(0);
+                });
+                break;
+            }
         }
     }
 }
 
-// 定时检测（每10秒打印一次状态）
-static void startMonitoring(void) {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        while (1) {
-            sleep(10);
-            WriteLog(@"⏱️ 定时窗口状态 (10秒)");
-            dumpWindowState();
-        }
-    });
-}
-
-// 监听后台事件
-static void observeNotifications(void) {
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *note) {
-        WriteLog(@"📱 App 进入后台，2秒后打印窗口状态...");
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            dumpWindowState();
-        });
-    }];
-
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillResignActiveNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *note) {
-        WriteLog(@"📱 App 即将失去焦点 (WillResignActive)");
-    }];
-
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *note) {
-        WriteLog(@"📱 App 回到前台 (DidBecomeActive)");
-    }];
-}
-
 __attribute__((constructor))
 static void initialize() {
-    WriteLog(@"===== ArtemisAutoQuit 诊断版加载 =====");
+    WriteLog(@"===== ArtemisAutoQuit 帧率检测版加载 =====");
     WriteLog(@"Bundle ID: %@", [[NSBundle mainBundle] bundleIdentifier]);
-    WriteLog(@"App 名称: %@", [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"]);
-    WriteLog(@"📁 日志路径: %@/AutoQuit.log", [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject]);
 
-    // 初始状态
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        WriteLog(@"=== 初始窗口状态 ===");
-        dumpWindowState();
+    // 创建帧定时器（主线程）
+    dispatch_async(dispatch_get_main_queue(), ^{
+        timer = CFRunLoopTimerCreate(NULL, CFAbsoluteTimeGetCurrent(), 1.0/60.0, 0, 0, onFrame, NULL);
+        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+        WriteLog(@"✅ 帧监控启动");
     });
 
-    observeNotifications();
-    startMonitoring();
+    // 启动监控线程
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        monitorThread();
+    });
 
-    WriteLog(@"✅ 诊断版启动，每10秒记录一次窗口状态，请点击退出游戏后等待10秒，然后提供日志。");
+    WriteLog(@"📁 日志路径: %@/AutoQuit.log", [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject]);
 }
