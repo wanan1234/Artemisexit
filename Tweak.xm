@@ -1,11 +1,11 @@
 // =============================================================
-//  ArtemisDiagnose — 诊断插件
-//  纯 MSHookFunction，无需 fishhook
+//  ArtemisAutoQuit — 自动退出插件（诊断版）
+//  功能：检测游戏退出，自动关闭 App
+//  日志：写入 Documents/AutoQuit.log
 // =============================================================
 
 #import <UIKit/UIKit.h>
 #import <substrate.h>
-#import <dlfcn.h>   // 添加缺少的头文件
 
 static void WriteLog(NSString *format, ...) {
     va_list args;
@@ -35,76 +35,64 @@ static void WriteLog(NSString *format, ...) {
         [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
         [fh closeFile];
     }
-    NSLog(@"[ArtemisDiag] %@", msg);
+    NSLog(@"[ArtemisAutoQuit] %@", msg);
 }
 
-// 原始函数指针
-static void (*orig_loop)(void);
-
-// 自定义循环监控
-static void my_loop(void) {
-    if (orig_loop) orig_loop();
-
-    static int count = 0;
-    count++;
-    if (count % 30 == 0) {  // 每30帧检查一次
-        UIWindow *mainWindow = [UIApplication sharedApplication].windows.firstObject;
-        if (mainWindow && !mainWindow.rootViewController) {
-            WriteLog(@"⚠️ 检测到 rootViewController 为空，可能已退出");
-        }
-        WriteLog(@"心跳: 循环仍在运行 (帧数: %d)", count);
+// 检测窗口状态并决定是否退出
+static void checkAndQuit(void) {
+    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    if (!keyWindow || !keyWindow.rootViewController) {
+        WriteLog(@"⚠️ 检测到窗口已失效 (keyWindow=%@, rootVC=%@)，执行自动退出",
+                 keyWindow, keyWindow.rootViewController);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            WriteLog(@"🔄 调用 exit(0) 终止 App");
+            exit(0);
+        });
+    } else {
+        WriteLog(@"✅ 窗口状态正常 (keyWindow=%@, rootVC=%@)", keyWindow, keyWindow.rootViewController);
     }
 }
 
-// 构造函数
+// 定时监控线程
+static void startMonitoring(void) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        while (1) {
+            sleep(2);
+            WriteLog(@"⏱️ 定时检测...");
+            checkAndQuit();
+        }
+    });
+}
+
 __attribute__((constructor))
 static void initialize() {
-    WriteLog(@"===== Artemis 诊断插件加载 =====");
+    WriteLog(@"===== ArtemisAutoQuit 诊断插件加载 =====");
     WriteLog(@"Bundle ID: %@", [[NSBundle mainBundle] bundleIdentifier]);
+    WriteLog(@"App 名称: %@", [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"]);
 
-    // 尝试 Hook Cocos2d-x 主循环
-    void *handle = dlopen(NULL, RTLD_LAZY);
-    if (handle) {
-        void *sym = dlsym(handle, "_ZN2cocos2d9Director5loopEv");
-        if (sym) {
-            WriteLog(@"找到 Cocos2d-x 主循环，开始 Hook");
-            MSHookFunction(sym, (void *)my_loop, (void **)&orig_loop);
-            WriteLog(@"Hook 成功");
-        } else {
-            WriteLog(@"未找到 Cocos2d-x 主循环，尝试 Unity...");
-            sym = dlsym(handle, "_UnityPlayerLoop");
-            if (sym) {
-                WriteLog(@"找到 Unity 主循环，开始 Hook");
-                MSHookFunction(sym, (void *)my_loop, (void **)&orig_loop);
-                WriteLog(@"Hook 成功");
-            } else {
-                WriteLog(@"未找到任何引擎主循环，仅监控窗口状态");
-                // 即使没有 Hook，也启动定时监控
-                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                    while (1) {
-                        sleep(2);
-                        UIWindow *mainWindow = [UIApplication sharedApplication].windows.firstObject;
-                        if (mainWindow && !mainWindow.rootViewController) {
-                            WriteLog(@"⚠️ 窗口存在但 rootViewController 为空 (定时检测)");
-                        }
-                    }
-                });
-            }
-        }
-        dlclose(handle);
-    } else {
-        WriteLog(@"dlopen 失败，启动定时监控");
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            while (1) {
-                sleep(2);
-                UIWindow *mainWindow = [UIApplication sharedApplication].windows.firstObject;
-                if (mainWindow && !mainWindow.rootViewController) {
-                    WriteLog(@"⚠️ 窗口存在但 rootViewController 为空 (定时检测)");
-                }
-            }
+    // 监听进入后台（游戏退出时通常触发）
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification *note) {
+        WriteLog(@"📱 App 进入后台，延迟检测...");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            WriteLog(@"🔍 后台延迟检测开始");
+            checkAndQuit();
         });
-    }
+    }];
 
-    WriteLog(@"诊断插件初始化完成");
-    WriteLog(@"日志路径: %@", [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject]);
+    // 监听前台激活（用于诊断）
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification *note) {
+        WriteLog(@"📱 App 回到前台");
+    }];
+
+    // 启动定时检测（后备方案）
+    startMonitoring();
+
+    WriteLog(@"✅ 自动退出监控已启动（双重检测：后台通知 + 定时轮询）");
+    WriteLog(@"📁 日志路径: %@/AutoQuit.log", [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject]);
 }
