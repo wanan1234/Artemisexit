@@ -1,7 +1,7 @@
 // =============================================================
-//  ArtemisAutoQuit — 按钮点击检测版（纯净版）
-//  功能：仅检测“退出”按钮点击，点击后自动关闭App
-//  不会误判，只在按钮被点击时触发
+//  ArtemisAutoQuit — 子视图数量监控版
+//  原理：检测 keyWindow 的子视图数量，如果突然减少到 < 2，说明游戏已退出
+//  适用：Artemis 引擎游戏（如 NinNinDays）
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -38,38 +38,76 @@ static void WriteLog(NSString *format, ...) {
     NSLog(@"[ArtemisAutoQuit] %@", msg);
 }
 
-// 仅Hook UIControl 的 sendAction:to:forEvent:
-%hook UIControl
-- (void)sendAction:(SEL)action to:(id)target forEvent:(UIEvent *)event {
-    %orig;
-    
-    // 只检查按钮
-    if ([self isKindOfClass:[UIButton class]]) {
-        UIButton *btn = (UIButton *)self;
-        NSString *title = [btn titleForState:UIControlStateNormal];
-        if (title) {
-            // 检查是否包含退出关键词（支持中文、日文、英文）
-            NSArray *keywords = @[@"退出", @"終了", @"Quit", @"Exit", @"終わる", @"閉じる"];
-            for (NSString *kw in keywords) {
-                if ([title rangeOfString:kw options:NSCaseInsensitiveSearch].location != NSNotFound) {
-                    WriteLog(@"👆 检测到退出按钮被点击: %@", title);
-                    // 延迟0.5秒，让游戏完成必要的清理
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                        WriteLog(@"🔄 执行 exit(0) 关闭 App");
-                        exit(0);
-                    });
-                    break;
-                }
-            }
+static NSUInteger lastSubviewCount = 0;
+static BOOL isFirstCheck = YES;
+
+static void checkWindowSubviews(void) {
+    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    if (!keyWindow) {
+        WriteLog(@"⚠️ keyWindow 为 nil，执行退出");
+        dispatch_async(dispatch_get_main_queue(), ^{
+            exit(0);
+        });
+        return;
+    }
+
+    NSUInteger count = keyWindow.subviews.count;
+    if (isFirstCheck) {
+        lastSubviewCount = count;
+        isFirstCheck = NO;
+        WriteLog(@"📊 初始子视图数量: %lu", (unsigned long)count);
+        return;
+    }
+
+    // 如果子视图数量突然减少到 < 2（引擎主视图被移除），判定为退出
+    if (count < 2 && lastSubviewCount > 2) {
+        WriteLog(@"⚠️ 子视图数量从 %lu 骤减到 %lu，游戏已退出", (unsigned long)lastSubviewCount, (unsigned long)count);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            WriteLog(@"🔄 执行 exit(0)");
+            exit(0);
+        });
+    }
+
+    // 如果子视图数量变为 0（异常）
+    if (count == 0) {
+        WriteLog(@"⚠️ 子视图数量为 0，执行退出");
+        dispatch_async(dispatch_get_main_queue(), ^{
+            exit(0);
+        });
+    }
+
+    lastSubviewCount = count;
+}
+
+static void monitorThread(void) {
+    @autoreleasepool {
+        while (1) {
+            sleep(1); // 每秒检查一次
+            dispatch_async(dispatch_get_main_queue(), ^{
+                checkWindowSubviews();
+            });
         }
     }
 }
-%end
 
 __attribute__((constructor))
 static void initialize() {
-    WriteLog(@"===== ArtemisAutoQuit 按钮检测版加载 =====");
+    WriteLog(@"===== ArtemisAutoQuit 子视图监控版加载 =====");
     WriteLog(@"Bundle ID: %@", [[NSBundle mainBundle] bundleIdentifier]);
+
+    // 延迟 1 秒后开始监控，确保窗口已初始化
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+        if (keyWindow) {
+            lastSubviewCount = keyWindow.subviews.count;
+            isFirstCheck = NO;
+            WriteLog(@"📊 初始子视图数量: %lu", (unsigned long)lastSubviewCount);
+        }
+    });
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        monitorThread();
+    });
+
     WriteLog(@"📁 日志路径: %@/AutoQuit.log", [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject]);
-    WriteLog(@"✅ 已安装按钮点击检测，将监控包含'退出/終了/Quit/Exit'的按钮");
 }
