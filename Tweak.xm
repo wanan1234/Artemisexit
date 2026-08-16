@@ -1,6 +1,6 @@
 // =============================================================
-//  ArtemisAutoQuit — 返回+退出抽屉菜单版
-//  功能：猫爪浮窗，点击后弹出返回/退出按钮
+//  ArtemisAutoQuit — 通用猫爪浮窗 + 抽屉菜单（方向自适应）
+//  功能：玻璃质感猫爪浮窗，点击后弹出返回/退出按钮
 //  适配：横竖屏自动适配，位置不跑偏
 // =============================================================
 
@@ -15,8 +15,8 @@ static BOOL isDragging = NO;
 
 // 抽屉相关
 static UIWindow *drawerWindow = nil;
-static UIButton *backButton = nil;     // 返回按钮
-static UIButton *quitButton = nil;     // 退出按钮
+static UIButton *backButton = nil;
+static UIButton *quitButton = nil;
 static BOOL isDrawerVisible = NO;
 
 // 按钮事件处理类
@@ -28,6 +28,7 @@ static BOOL isDrawerVisible = NO;
 - (void)hideDrawer;
 - (void)triggerBack;
 - (void)triggerQuit;
+- (UIViewController *)topViewController;
 @end
 
 @implementation FloatButtonTarget
@@ -63,26 +64,30 @@ static BOOL isDrawerVisible = NO;
     // 获取当前屏幕尺寸（支持横竖屏）
     CGRect screenBounds = [UIScreen mainScreen].bounds;
     CGPoint floatCenter = floatWindow.center;
-    CGFloat buttonSize = 36; // 比浮窗稍小 (浮窗40)
+    CGFloat buttonSize = 36;
     CGFloat spacing = 12;
     
-    // 计算两个按钮的位置（水平排列在浮窗上方）
-    // 返回按钮在左，退出按钮在右
+    // 决定按钮显示在浮窗上方还是下方
     BOOL showAbove = (floatCenter.y - 60 > 0);
     CGFloat yOffset = showAbove ? -(buttonSize + spacing) : (buttonSize + spacing);
     
     CGPoint backCenter = CGPointMake(floatCenter.x - buttonSize/2 - spacing/2, floatCenter.y + yOffset);
     CGPoint quitCenter = CGPointMake(floatCenter.x + buttonSize/2 + spacing/2, floatCenter.y + yOffset);
     
-    // 确保按钮不超出屏幕边界（水平方向）
-    CGFloat halfWidth = buttonSize/2;
-    backCenter.x = MAX(halfWidth + 10, MIN(backCenter.x, screenBounds.size.width - halfWidth - 10));
-    quitCenter.x = MAX(halfWidth + 10, MIN(quitCenter.x, screenBounds.size.width - halfWidth - 10));
+    // 边界修正（确保不超出屏幕）
+    CGFloat half = buttonSize/2;
+    backCenter.x = MAX(half + 10, MIN(backCenter.x, screenBounds.size.width - half - 10));
+    quitCenter.x = MAX(half + 10, MIN(quitCenter.x, screenBounds.size.width - half - 10));
+    // 垂直边界修正
+    CGFloat topMargin = 40;
+    CGFloat bottomMargin = 40;
+    backCenter.y = MAX(topMargin + half, MIN(backCenter.y, screenBounds.size.height - bottomMargin - half));
+    quitCenter.y = MAX(topMargin + half, MIN(quitCenter.y, screenBounds.size.height - bottomMargin - half));
     
-    // 如果上方空间不足，下方空间也不足，强行放在浮窗上方（偏上）
-    if (yOffset < 0 && floatCenter.y - 60 < 0) {
-        backCenter.y = 50;
-        quitCenter.y = 50;
+    // 如果上下空间都不足，强制放在浮窗上方并调整
+    if (floatCenter.y - topMargin < buttonSize + spacing && floatCenter.y + buttonSize + spacing > screenBounds.size.height - bottomMargin) {
+        backCenter.y = topMargin + half;
+        quitCenter.y = topMargin + half;
     }
     
     // --- 返回按钮（←）---
@@ -95,7 +100,6 @@ static BOOL isDrawerVisible = NO;
     backButton.userInteractionEnabled = YES;
     [backButton addTarget:self action:@selector(triggerBack) forControlEvents:UIControlEventTouchUpInside];
     
-    // 毛玻璃效果
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
     UIVisualEffectView *blurViewBtn = [[UIVisualEffectView alloc] initWithEffect:blur];
     blurViewBtn.frame = backButton.bounds;
@@ -104,7 +108,6 @@ static BOOL isDrawerVisible = NO;
     blurViewBtn.userInteractionEnabled = NO;
     [backButton addSubview:blurViewBtn];
     
-    // 蓝色遮罩
     UIView *tint = [[UIView alloc] initWithFrame:backButton.bounds];
     tint.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:1.0 alpha:0.4];
     tint.layer.cornerRadius = buttonSize/2;
@@ -112,7 +115,6 @@ static BOOL isDrawerVisible = NO;
     tint.userInteractionEnabled = NO;
     [backButton addSubview:tint];
     
-    // ← 图标
     UILabel *label = [[UILabel alloc] initWithFrame:backButton.bounds];
     label.text = @"←";
     label.textColor = [UIColor whiteColor];
@@ -144,7 +146,6 @@ static BOOL isDrawerVisible = NO;
     blurViewBtn2.userInteractionEnabled = NO;
     [quitButton addSubview:blurViewBtn2];
     
-    // 红色遮罩
     UIView *tint2 = [[UIView alloc] initWithFrame:quitButton.bounds];
     tint2.backgroundColor = [UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:0.4];
     tint2.layer.cornerRadius = buttonSize/2;
@@ -183,53 +184,51 @@ static BOOL isDrawerVisible = NO;
 }
 
 - (void)triggerBack {
-    // 触发 iOS 系统的右滑返回手势
-    UIViewController *topVC = [self getTopViewController];
+    UIViewController *topVC = [self topViewController];
     if (!topVC) {
         [self hideDrawer];
         return;
     }
     
-    // 方法1：如果是在 NavigationController 中，直接 pop
+    // 方法1：如果是 NavigationController 且栈中多于1个，pop
     if (topVC.navigationController && topVC.navigationController.viewControllers.count > 1) {
         [topVC.navigationController popViewControllerAnimated:YES];
         [self hideDrawer];
         return;
     }
     
-    // 方法2：模拟从右向左的滑动手势（从左边缘滑动）
-    // 通过发送一个系统手势事件来触发返回
-    // 利用运行时获取 interactivePopGestureRecognizer 并触发
-    if (topVC.navigationController) {
-        UIGestureRecognizer *gesture = topVC.navigationController.interactivePopGestureRecognizer;
-        if (gesture) {
-            // 模拟手势触发
-            [topVC.navigationController popViewControllerAnimated:YES];
-            [self hideDrawer];
-            return;
-        }
-    }
-    
-    // 方法3：如果当前是 presented ViewController，则 dismiss
+    // 方法2：如果是 presented ViewController，dismiss
     if (topVC.presentingViewController) {
         [topVC dismissViewControllerAnimated:YES completion:nil];
         [self hideDrawer];
         return;
     }
     
+    // 方法3：尝试触发系统的返回手势（模拟从左边缘右滑）
+    // 通过模拟一个 PanGestureRecognizer 事件（私有API，风险较高，但这里不采用）
+    // 改为寻找当前 view 的 backBarButtonItem 并执行其 action
+    if (topVC.navigationItem.leftBarButtonItem) {
+        SEL action = topVC.navigationItem.leftBarButtonItem.action;
+        if (action && [topVC respondsToSelector:action]) {
+            [topVC performSelector:action withObject:nil];
+            [self hideDrawer];
+            return;
+        }
+    }
+    
+    // 方法4：如果当前是根视图，无法返回，只关闭抽屉
     [self hideDrawer];
 }
 
 - (void)triggerQuit {
-    // 显示退出确认对话框
-    UIViewController *topVC = [self getTopViewController];
+    UIViewController *topVC = [self topViewController];
     if (!topVC) {
         exit(0);
         return;
     }
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出游戏"
-                                                                   message:@"确定要退出游戏吗？"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出程序"
+                                                                   message:@"确定要退出程序吗？"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         [self hideDrawer];
@@ -242,10 +241,9 @@ static BOOL isDrawerVisible = NO;
     [topVC presentViewController:alert animated:YES completion:nil];
 }
 
-- (UIViewController *)getTopViewController {
+- (UIViewController *)topViewController {
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return nil;
-    
     UIViewController *topVC = keyWindow.rootViewController;
     while (topVC.presentedViewController) {
         topVC = topVC.presentedViewController;
@@ -266,10 +264,10 @@ static BOOL isDrawerVisible = NO;
         frame.origin.x += translation.x;
         frame.origin.y += translation.y;
         
-        CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
-        CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
-        frame.origin.x = MAX(0, MIN(frame.origin.x, screenWidth - frame.size.width));
-        frame.origin.y = MAX(0, MIN(frame.origin.y, screenHeight - frame.size.height));
+        // 使用当前屏幕尺寸限制
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
+        frame.origin.x = MAX(0, MIN(frame.origin.x, screenBounds.size.width - frame.size.width));
+        frame.origin.y = MAX(0, MIN(frame.origin.y, screenBounds.size.height - frame.size.height));
         
         floatWindow.frame = frame;
         [pan setTranslation:CGPointZero inView:floatWindow];
@@ -287,11 +285,10 @@ static BOOL isDrawerVisible = NO;
 
 - (void)updateWindowFrame {
     if (!floatWindow) return;
-    CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
-    CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
+    CGRect screenBounds = [UIScreen mainScreen].bounds;
     CGRect frame = floatWindow.frame;
-    frame.origin.x = MAX(0, MIN(frame.origin.x, screenWidth - frame.size.width));
-    frame.origin.y = MAX(0, MIN(frame.origin.y, screenHeight - frame.size.height));
+    frame.origin.x = MAX(0, MIN(frame.origin.x, screenBounds.size.width - frame.size.width));
+    frame.origin.y = MAX(0, MIN(frame.origin.y, screenBounds.size.height - frame.size.height));
     floatWindow.frame = frame;
     if (isDrawerVisible) [self hideDrawer];
 }
@@ -346,7 +343,6 @@ static void initialize() {
         floatButton.backgroundColor = [UIColor clearColor];
         floatButton.userInteractionEnabled = YES;
         
-        // 玻璃效果
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
         blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         blurView.frame = floatButton.bounds;
@@ -355,7 +351,6 @@ static void initialize() {
         blurView.userInteractionEnabled = NO;
         [floatButton addSubview:blurView];
         
-        // 半透明白色覆盖
         UIView *tintView = [[UIView alloc] initWithFrame:floatButton.bounds];
         tintView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.2];
         tintView.layer.cornerRadius = 20;
@@ -363,20 +358,17 @@ static void initialize() {
         tintView.userInteractionEnabled = NO;
         [floatButton addSubview:tintView];
         
-        // 猫爪图标
         pawImageView = [[UIImageView alloc] initWithImage:pawImage];
         pawImageView.contentMode = UIViewContentModeScaleAspectFit;
         pawImageView.frame = CGRectMake(9, 9, 22, 22);
         pawImageView.userInteractionEnabled = NO;
         [floatButton addSubview:pawImageView];
         
-        // 阴影
         floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
         floatButton.layer.shadowOffset = CGSizeMake(0, 2);
         floatButton.layer.shadowRadius = 6;
         floatButton.layer.shadowOpacity = 0.25;
         
-        // 事件
         [floatButton addTarget:target action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:target action:@selector(handlePan:)];
         [floatButton addGestureRecognizer:pan];
@@ -387,20 +379,19 @@ static void initialize() {
         NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
         CGFloat cx = [defaults floatForKey:@"pawButtonCenterX"];
         CGFloat cy = [defaults floatForKey:@"pawButtonCenterY"];
-        CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-        CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
         if (cx != 0 && cy != 0) {
-            cx = MAX(20, MIN(cx, screenW - 20));
-            cy = MAX(20, MIN(cy, screenH - 20));
+            cx = MAX(20, MIN(cx, screenBounds.size.width - 20));
+            cy = MAX(20, MIN(cy, screenBounds.size.height - 20));
             floatWindow.center = CGPointMake(cx, cy);
         } else {
-            floatWindow.center = CGPointMake(screenW - 60, 120);
+            floatWindow.center = CGPointMake(screenBounds.size.width - 60, 120);
         }
         
         floatWindow.hidden = NO;
         [floatWindow makeKeyAndVisible];
         
-        // 监听旋转和前后台
+        // 监听旋转
         [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification
                                                           object:nil
                                                            queue:[NSOperationQueue mainQueue]
@@ -427,6 +418,6 @@ static void initialize() {
             if (isDrawerVisible) [target hideDrawer];
         }];
         
-        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗 + 返回/退出菜单已加载");
+        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗加载完成");
     });
 }
