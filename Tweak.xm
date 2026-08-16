@@ -1,5 +1,6 @@
 // =============================================================
-//  ArtemisAutoQuit — 最终版（三指双击 + 原生弹窗）
+//  ArtemisAutoQuit — 最终版（无额外窗口，原生弹窗）
+//  功能：猫爪浮窗 + 三指双击切换 + 原生 UIAlertController
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -11,7 +12,7 @@ static UIButton *floatButton = nil;
 static BOOL isFloatingVisible = YES;
 
 // =============================================================
-// 三指双击手势（参考红果的双指实现，改为三指）
+// 三指双击手势
 // =============================================================
 static void toggleFloatingVisibility(void) {
     isFloatingVisible = !isFloatingVisible;
@@ -20,7 +21,6 @@ static void toggleFloatingVisibility(void) {
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-// Hook UIWindow 添加三指双击手势
 %hook UIWindow
 - (instancetype)initWithFrame:(CGRect)frame {
     self = %orig;
@@ -46,38 +46,6 @@ static void toggleFloatingVisibility(void) {
 %end
 
 // =============================================================
-// 原生弹窗（带毛玻璃效果）
-// =============================================================
-static void showNativeAlert(NSString *title, NSString *message) {
-    __block UIWindow *alertWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    alertWindow.windowLevel = UIWindowLevelAlert + 1;
-    alertWindow.backgroundColor = [UIColor clearColor];
-    alertWindow.hidden = NO;
-    
-    UIViewController *rootVC = [[UIViewController alloc] init];
-    rootVC.view.backgroundColor = [UIColor clearColor];
-    alertWindow.rootViewController = rootVC;
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
-                                                                   message:message
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
-        alertWindow.hidden = YES;
-        alertWindow.rootViewController = nil;
-        alertWindow = nil;
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        alertWindow.hidden = YES;
-        alertWindow.rootViewController = nil;
-        alertWindow = nil;
-        exit(0);
-    }]];
-    
-    [rootVC presentViewController:alert animated:YES completion:nil];
-    [alertWindow makeKeyAndVisible];
-}
-
-// =============================================================
 // 浮窗事件处理
 // =============================================================
 @interface FloatHandler : NSObject
@@ -86,6 +54,7 @@ static void showNativeAlert(NSString *title, NSString *message) {
 - (void)buttonLongPressed;
 - (void)handlePan:(UIPanGestureRecognizer *)pan;
 - (void)updateWindowFrame;
+- (UIViewController *)topViewController;
 @end
 
 @implementation FloatHandler
@@ -99,8 +68,41 @@ static void showNativeAlert(NSString *title, NSString *message) {
     return instance;
 }
 
+- (UIViewController *)topViewController {
+    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    if (!keyWindow) return nil;
+    UIViewController *topVC = keyWindow.rootViewController;
+    while (topVC.presentedViewController) {
+        topVC = topVC.presentedViewController;
+    }
+    return topVC;
+}
+
 - (void)buttonTapped {
-    showNativeAlert(@"退出程序", @"确定要退出程序吗？");
+    // 先隐藏浮窗，防止遮挡弹窗
+    floatWindow.hidden = YES;
+    
+    UIViewController *topVC = [self topViewController];
+    if (!topVC) {
+        // 无视图控制器则直接退出
+        exit(0);
+        return;
+    }
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出程序"
+                                                                   message:@"确定要退出程序吗？"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+        // 取消时恢复浮窗
+        floatWindow.hidden = !isFloatingVisible;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        // 退出前恢复浮窗（其实没意义，但保持状态）
+        floatWindow.hidden = NO;
+        exit(0);
+    }]];
+    
+    [topVC presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)buttonLongPressed {
@@ -147,9 +149,6 @@ static void showNativeAlert(NSString *title, NSString *message) {
 
 @end
 
-// =============================================================
-// 初始化
-// =============================================================
 __attribute__((constructor))
 static void initialize() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -162,7 +161,6 @@ static void initialize() {
             [defaults synchronize];
         }
         
-        // 加载猫爪图标
         UIImage *pawImage = [UIImage imageNamed:@"catpaw"];
         if (!pawImage) {
             pawImage = [UIImage systemImageNamed:@"paw.fill"];
@@ -176,7 +174,6 @@ static void initialize() {
             }
         }
         
-        // 创建浮窗
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
         floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
         floatWindow.backgroundColor = [UIColor clearColor];
