@@ -4,6 +4,7 @@
 
 #import <UIKit/UIKit.h>
 #import <substrate.h>
+#import <dlfcn.h>   // ← 添加这一行，提供 dlopen、dlsym、RTLD_LAZY
 
 static void WriteLog(NSString *format, ...) {
     va_list args;
