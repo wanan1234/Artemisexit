@@ -3,7 +3,7 @@ Name: ArtemisDiagnose
 Version: 1.0.0
 Architecture: iphoneos-arm
 Description: Diagnose Artemis engine exit behavior.
+Depends: firmware (>= 14.0)
 Maintainer: Your Name <your@email.com>
 Author: Your Name <your@email.com>
 Section: Tweaks
-Depends: firmware (>= 14.0)
