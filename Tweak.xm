@@ -22,12 +22,14 @@ jobs:
           brew install dpkg ldid
           git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
 
+      - name: Verify Theos installation
+        run: |
+          ls -l $HOME/theos/bin/dm.pl   # 检查 dm.pl 是否存在
+
       - name: Build package
-        env:
-          THEOS: $HOME/theos
         run: |
           export THEOS="$HOME/theos"
-          make package FINALPACKAGE=1
+          make package FINALPACKAGE=1 THEOS="$THEOS"   # 显式传递 THEOS
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
