@@ -27,7 +27,7 @@ jobs:
           THEOS: $HOME/theos
         run: |
           export THEOS="$THEOS"
-          make package FINALPACKAGE=1 SDK_VERSION=latest
+          make package FINALPACKAGE=1
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
