@@ -1,8 +1,7 @@
 // =============================================================
-//  ArtemisAutoQuit — 通用猫爪浮窗 + 抽屉菜单 + 三指双击切换
-//  功能：玻璃质感猫爪浮窗，点击后弹出返回/退出按钮
-//       三指双击屏幕可显示/隐藏浮窗（状态保存）
-//  适配：横竖屏自动适配，位置不跑偏
+//  ArtemisAutoQuit — 最终版（三指双击切换）
+//  功能：猫爪浮窗 + 抽屉菜单（返回/退出）+ 三指双击切换
+//  适配：横竖屏自适应，位置记忆
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -13,13 +12,33 @@ static UIButton *floatButton = nil;
 static UIVisualEffectView *blurView = nil;
 static UIImageView *pawImageView = nil;
 static BOOL isDragging = NO;
-static BOOL isFloatingVisible = YES; // 默认显示
+static BOOL isFloatingVisible = YES;
 
-// 抽屉相关
 static UIWindow *drawerWindow = nil;
 static UIButton *backButton = nil;
 static UIButton *quitButton = nil;
 static BOOL isDrawerVisible = NO;
+
+// 手势处理类
+@interface GestureHandler : NSObject
++ (void)handleThreeFingerDoubleTap;
+@end
+@implementation GestureHandler
++ (void)handleThreeFingerDoubleTap {
+    isFloatingVisible = !isFloatingVisible;
+    floatWindow.hidden = !isFloatingVisible;
+    if (isDrawerVisible) {
+        isDrawerVisible = NO;
+        drawerWindow.hidden = YES;
+        [backButton removeFromSuperview];
+        [quitButton removeFromSuperview];
+        backButton = nil;
+        quitButton = nil;
+    }
+    [[NSUserDefaults standardUserDefaults] setBool:isFloatingVisible forKey:@"floatingVisible"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+@end
 
 // 按钮事件处理类
 @interface FloatButtonTarget : NSObject
@@ -197,7 +216,6 @@ static BOOL isDrawerVisible = NO;
         return;
     }
     
-    // 如果当前是根视图或无法返回，只关闭抽屉
     [self hideDrawer];
 }
 
@@ -284,19 +302,9 @@ static void saveButtonPosition(void) {
     }
 }
 
-// 切换浮窗显示状态
-static void toggleFloatingVisibility(void) {
-    isFloatingVisible = !isFloatingVisible;
-    floatWindow.hidden = !isFloatingVisible;
-    if (isDrawerVisible) [target hideDrawer];
-    [[NSUserDefaults standardUserDefaults] setBool:isFloatingVisible forKey:@"floatingVisible"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
-
 __attribute__((constructor))
 static void initialize() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        // 恢复浮窗显示状态
         NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
         if ([defaults objectForKey:@"floatingVisible"]) {
             isFloatingVisible = [defaults boolForKey:@"floatingVisible"];
@@ -308,7 +316,6 @@ static void initialize() {
         
         target = [[FloatButtonTarget alloc] init];
         
-        // 加载猫爪图标
         UIImage *pawImage = [UIImage imageNamed:@"catpaw"];
         if (!pawImage) {
             pawImage = [UIImage systemImageNamed:@"paw.fill"];
@@ -322,7 +329,6 @@ static void initialize() {
             }
         }
         
-        // 创建浮窗
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
         floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
         floatWindow.backgroundColor = [UIColor clearColor];
@@ -334,7 +340,6 @@ static void initialize() {
         rootVC.view.userInteractionEnabled = NO;
         floatWindow.rootViewController = rootVC;
         
-        // 按钮
         floatButton = [UIButton buttonWithType:UIButtonTypeCustom];
         floatButton.frame = CGRectMake(0, 0, 40, 40);
         floatButton.backgroundColor = [UIColor clearColor];
@@ -372,7 +377,6 @@ static void initialize() {
         
         [floatWindow addSubview:floatButton];
         
-        // 恢复位置
         CGFloat cx = [defaults floatForKey:@"pawButtonCenterX"];
         CGFloat cy = [defaults floatForKey:@"pawButtonCenterY"];
         CGRect screenBounds = [UIScreen mainScreen].bounds;
@@ -389,13 +393,12 @@ static void initialize() {
             [floatWindow makeKeyAndVisible];
         }
         
-        // 添加三指双击手势到主窗口
+        // 添加三指双击手势
         UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
         if (mainWindow) {
-            UITapGestureRecognizer *threeFingerDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:nil action:nil];
+            UITapGestureRecognizer *threeFingerDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:[GestureHandler class] action:@selector(handleThreeFingerDoubleTap)];
             threeFingerDoubleTap.numberOfTouchesRequired = 3;
             threeFingerDoubleTap.numberOfTapsRequired = 2;
-            [threeFingerDoubleTap addTarget:self action:@selector(toggleFloatingVisibility)];
             [mainWindow addGestureRecognizer:threeFingerDoubleTap];
         }
         
@@ -426,15 +429,6 @@ static void initialize() {
             if (isDrawerVisible) [target hideDrawer];
         }];
         
-        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗加载完成，三指双击切换显示");
+        NSLog(@"[ArtemisAutoQuit] 加载完成，三指双击切换浮窗");
     });
 }
-
-// 由于在 block 中无法直接调用 toggleFloatingVisibility，创建一个方法
-static void toggleFloatingVisibilityWrapper(id self, SEL _cmd) {
-    toggleFloatingVisibility();
-}
-
-// 调整三指手势的 target，不能使用 self（因为 initialize 是 C 函数）
-// 改用类方法或直接在 block 中实现
-// 修改：在 initialize 中创建手势时直接使用 block 或使用一个静态函数作为回调
