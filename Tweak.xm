@@ -2,8 +2,7 @@ name: Build and Release
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
     paths:
       - 'Tweak.xm'
   workflow_dispatch:
@@ -13,34 +12,25 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Install Theos dependencies
         run: |
-          brew install ldid dpkg
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          brew install dpkg ldid
+          git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
 
-      - name: Setup Theos
-        run: |
-          git clone --depth 1 https://github.com/theos/theos.git $HOME/theos
-          sudo ln -s $HOME/theos/bin/nic.pl /usr/local/bin/nic.pl || true
-
-      - name: Build tweak
+      - name: Build package
+        env:
+          THEOS: $HOME/theos
         run: |
           export THEOS="$HOME/theos"
-          make clean
-          make package
-          echo "PACKAGE_PATH=$(ls packages/*.deb)" >> $GITHUB_ENV
+          make package FINALPACKAGE=1
 
-      - name: Upload .deb artifact
+      - name: Upload deb
         uses: actions/upload-artifact@v4
         with:
           name: ArtemisDiagnose.deb
-          path: ${{ env.PACKAGE_PATH }}
-
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ${{ env.PACKAGE_PATH }}
-          generate_release_notes: true
+          path: packages/*.deb
