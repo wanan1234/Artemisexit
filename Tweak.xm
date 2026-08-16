@@ -1,5 +1,7 @@
 // =============================================================
-//  ArtemisAutoQuit — 帧率检测版（修正）
+//  ArtemisAutoQuit — 前台帧率检测版
+//  功能：仅在前台检测渲染停止，后台暂停检测
+//  适用：Artemis 引擎游戏
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -38,34 +40,47 @@ static void WriteLog(NSString *format, ...) {
 }
 
 static NSTimeInterval lastFrameTime = 0;
+static BOOL isInBackground = NO;
+static BOOL shouldExit = NO;
 static CFRunLoopTimerRef timer = NULL;
 
 static void onFrame(CFRunLoopTimerRef timer, void *info) {
     lastFrameTime = [[NSDate date] timeIntervalSince1970];
 }
 
+static void checkAndQuit(void) {
+    if (isInBackground) {
+        WriteLog(@"⏸️ 应用在后台，跳过检测");
+        return;
+    }
+    if (shouldExit) return;
+
+    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+    NSTimeInterval diff = now - lastFrameTime;
+    WriteLog(@"⏱️ 帧间隔: %.2f 秒", diff);
+
+    if (diff > 3.0) {
+        WriteLog(@"⚠️ 渲染停止超过3秒，执行退出");
+        shouldExit = YES;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            WriteLog(@"🔄 调用 exit(0)");
+            exit(0);
+        });
+    }
+}
+
 static void monitorThread(void) {
     @autoreleasepool {
         while (1) {
             sleep(1);
-            NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-            NSTimeInterval diff = now - lastFrameTime;
-            WriteLog(@"⏱️ 帧间隔: %.2f 秒", diff);
-            if (diff > 3.0) {
-                WriteLog(@"⚠️ 渲染停止超过3秒，执行退出");
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    WriteLog(@"🔄 调用 exit(0)");
-                    exit(0);
-                });
-                break;
-            }
+            checkAndQuit();
         }
     }
 }
 
 __attribute__((constructor))
 static void initialize() {
-    WriteLog(@"===== ArtemisAutoQuit 帧率检测版加载 =====");
+    WriteLog(@"===== ArtemisAutoQuit 前台帧率检测版加载 =====");
     WriteLog(@"Bundle ID: %@", [[NSBundle mainBundle] bundleIdentifier]);
 
     // 创建帧定时器（主线程）
@@ -74,6 +89,25 @@ static void initialize() {
         CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
         WriteLog(@"✅ 帧监控启动");
     });
+
+    // 监听前后台切换
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification *note) {
+        isInBackground = YES;
+        lastFrameTime = [[NSDate date] timeIntervalSince1970]; // 重置时间，防止刚返回前台时误判
+        WriteLog(@"📱 应用进入后台，暂停检测");
+    }];
+
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification *note) {
+        isInBackground = NO;
+        lastFrameTime = [[NSDate date] timeIntervalSince1970]; // 重置时间，给渲染一点缓冲
+        WriteLog(@"📱 应用回到前台，恢复检测");
+    }];
 
     // 启动监控线程
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
