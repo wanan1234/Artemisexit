@@ -24,7 +24,7 @@ jobs:
 
       - name: Verify Theos
         run: |
-          ls -l $HOME/theos/makefiles/common.mk   # 确认文件存在
+          ls -l $HOME/theos/makefiles/common.mk
 
       - name: Build package
         env:
