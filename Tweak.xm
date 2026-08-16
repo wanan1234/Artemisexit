@@ -1,10 +1,11 @@
 // =============================================================
-//  ArtemisDiagnose — 诊断插件（纯 MSHookFunction，无需 fishhook）
+//  ArtemisDiagnose — 诊断插件
+//  纯 MSHookFunction，无需 fishhook
 // =============================================================
 
 #import <UIKit/UIKit.h>
 #import <substrate.h>
-#import <dlfcn.h>   // ← 添加这一行，提供 dlopen、dlsym、RTLD_LAZY
+#import <dlfcn.h>   // 添加缺少的头文件
 
 static void WriteLog(NSString *format, ...) {
     va_list args;
