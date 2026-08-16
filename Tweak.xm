@@ -1,6 +1,5 @@
 // =============================================================
-//  ArtemisAutoQuit — 最终版
-//  功能：猫爪浮窗 + 三指双击切换 + 原生弹窗（带毛玻璃）
+//  ArtemisAutoQuit — 最终版（三指双击 + 原生弹窗）
 // =============================================================
 
 #import <UIKit/UIKit.h>
@@ -27,8 +26,8 @@ static void toggleFloatingVisibility(void) {
     self = %orig;
     if (self) {
         UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(artemis_handleTripleTap:)];
-        gesture.numberOfTouchesRequired = 3;  // 三指（你要的）
-        gesture.numberOfTapsRequired = 2;     // 双击
+        gesture.numberOfTouchesRequired = 3;
+        gesture.numberOfTapsRequired = 2;
         [self addGestureRecognizer:gesture];
         NSLog(@"[ArtemisAutoQuit] 三指双击手势已添加");
     }
@@ -47,13 +46,10 @@ static void toggleFloatingVisibility(void) {
 %end
 
 // =============================================================
-// 浮窗 + 原生弹窗
+// 原生弹窗（带毛玻璃效果）
 // =============================================================
-
-// 使用专用窗口显示原生 UIAlertController（带毛玻璃效果）
 static void showNativeAlert(NSString *title, NSString *message) {
-    // 创建一个层级最高的窗口来承载弹窗
-    UIWindow *alertWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    __block UIWindow *alertWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     alertWindow.windowLevel = UIWindowLevelAlert + 1;
     alertWindow.backgroundColor = [UIColor clearColor];
     alertWindow.hidden = NO;
@@ -81,7 +77,9 @@ static void showNativeAlert(NSString *title, NSString *message) {
     [alertWindow makeKeyAndVisible];
 }
 
+// =============================================================
 // 浮窗事件处理
+// =============================================================
 @interface FloatHandler : NSObject
 + (instancetype)sharedInstance;
 - (void)buttonTapped;
@@ -102,12 +100,11 @@ static void showNativeAlert(NSString *title, NSString *message) {
 }
 
 - (void)buttonTapped {
-    // 点击浮窗 -> 显示原生弹窗（带毛玻璃效果）
     showNativeAlert(@"退出程序", @"确定要退出程序吗？");
 }
 
 - (void)buttonLongPressed {
-    exit(0);  // 长按直接退出
+    exit(0);
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -150,6 +147,9 @@ static void showNativeAlert(NSString *title, NSString *message) {
 
 @end
 
+// =============================================================
+// 初始化
+// =============================================================
 __attribute__((constructor))
 static void initialize() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -193,7 +193,6 @@ static void initialize() {
         floatButton.backgroundColor = [UIColor clearColor];
         floatButton.userInteractionEnabled = YES;
         
-        // 玻璃效果
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
         UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         blurView.frame = floatButton.bounds;
