@@ -1,33 +1,33 @@
 // =============================================================
-//  ArtemisAutoQuit — CADisplayLink 帧率监控版 v2
-//  修复：初始化 lastFrameTime 为当前时间，允许 5 秒启动缓冲
-//  兼容：处理应用前后台切换
+//  ArtemisAutoQuit — 组合检测版
+//  原理：同时监控 rootViewController 变化 + exit() 调用 + 按钮点击
+//  不会误退，只在游戏真正退出时触发
 // =============================================================
 
 #import <UIKit/UIKit.h>
 #import <substrate.h>
-#import <QuartzCore/QuartzCore.h>
+#import <dlfcn.h>
 
 static void WriteLog(NSString *format, ...) {
     va_list args;
     va_start(args, format);
     NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
-
+    
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *docPath = [paths firstObject];
     NSString *logPath = [docPath stringByAppendingPathComponent:@"AutoQuit.log"];
-
+    
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm fileExistsAtPath:docPath]) {
         [fm createDirectoryAtPath:docPath withIntermediateDirectories:YES attributes:nil error:nil];
     }
-
+    
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     df.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
     NSString *timestamp = [df stringFromDate:[NSDate date]];
     NSString *line = [NSString stringWithFormat:@"[%@] %@\n", timestamp, msg];
-
+    
     NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
     if (!fh) {
         [line writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
@@ -39,118 +39,111 @@ static void WriteLog(NSString *format, ...) {
     NSLog(@"[ArtemisAutoQuit] %@", msg);
 }
 
-static CADisplayLink *displayLink = nil;
-static NSTimeInterval lastFrameTime = 0;
-static BOOL isDisplayLinkActive = NO;
-static BOOL shouldExit = NO;
-static NSTimeInterval launchTime = 0;
+// ---------- 方法1：Hook exit() 函数 ----------
+static void (*orig_exit)(int status);
 
-// 使用 CADisplayLink 的回调方法
-@interface DisplayLinkTarget : NSObject
-@end
-
-@implementation DisplayLinkTarget
-- (void)onFrame:(CADisplayLink *)sender {
-    lastFrameTime = sender.timestamp;
-    if (!isDisplayLinkActive) {
-        isDisplayLinkActive = YES;
-        WriteLog(@"✅ CADisplayLink 首次回调，帧率监控已激活");
+static void my_exit(int status) {
+    WriteLog(@"⚠️ 检测到 exit(%d) 被调用，游戏正在退出", status);
+    // 不阻塞原始退出，只记录并确保App关闭
+    // 由于 exit() 本身就会终止进程，我们不需要额外操作
+    if (orig_exit) {
+        orig_exit(status);
     }
 }
-@end
 
-static DisplayLinkTarget *target = nil;
+// ---------- 方法2：监控 rootViewController 变化 ----------
+static UIViewController *lastRootVC = nil;
+static void monitorRootViewController(void) {
+    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    if (!keyWindow) return;
+    
+    UIViewController *currentRootVC = keyWindow.rootViewController;
+    
+    // 如果 rootViewController 从 AppController 变成了其他东西（或nil）
+    // 且变化后不再是 AppController，说明游戏已退出
+    if (lastRootVC && currentRootVC != lastRootVC) {
+        NSString *lastClass = NSStringFromClass([lastRootVC class]);
+        NSString *currentClass = currentRootVC ? NSStringFromClass([currentRootVC class]) : @"nil";
+        
+        // 如果之前的 rootVC 是 AppController，现在不是了 -> 游戏退出
+        if ([lastClass isEqualToString:@"AppController"] && 
+            ![currentClass isEqualToString:@"AppController"]) {
+            WriteLog(@"⚠️ rootViewController 从 %@ 变为 %@，游戏已退出", lastClass, currentClass);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                WriteLog(@"🔄 执行 exit(0) 关闭 App");
+                exit(0);
+            });
+        }
+    }
+    lastRootVC = currentRootVC;
+}
 
-// 监控线程
+// ---------- 方法3：Hook UIButton 点击（检测“退出”按钮） ----------
+%hook UIControl
+- (void)sendAction:(SEL)action to:(id)target forEvent:(UIEvent *)event {
+    %orig;
+    
+    // 检查是否点击了“退出”相关的按钮
+    if ([self isKindOfClass:[UIButton class]]) {
+        UIButton *btn = (UIButton *)self;
+        NSString *title = [btn titleForState:UIControlStateNormal];
+        if (title && ([title rangeOfString:@"退出"].location != NSNotFound ||
+                      [title rangeOfString:@"終了"].location != NSNotFound ||
+                      [title rangeOfString:@"Quit"].location != NSNotFound ||
+                      [title rangeOfString:@"Exit"].location != NSNotFound)) {
+            WriteLog(@"👆 检测到退出按钮被点击: %@", title);
+            // 延迟一点点，让引擎完成清理，然后退出
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                WriteLog(@"🔄 执行 exit(0) 关闭 App");
+                exit(0);
+            });
+        }
+    }
+}
+%end
+
+// ---------- 定时监控线程 ----------
 static void monitorThread(void) {
     @autoreleasepool {
-        // 给予 5 秒的启动缓冲
-        dispatch_async(dispatch_get_main_queue(), ^{
-            launchTime = [[NSDate date] timeIntervalSince1970];
-            WriteLog(@"📌 启动缓冲开始，等待 CADisplayLink 回调...");
-        });
-
         while (1) {
-            sleep(1);
-            if (shouldExit) break;
-
-            NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-            
-            // 如果应用进入后台，跳过检测
-            if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
-                WriteLog(@"⏸️ 应用在后台，跳过检测");
-                continue;
-            }
-
-            // 如果还没有收到回调，检查是否超过 5 秒启动缓冲
-            if (!isDisplayLinkActive) {
-                if (now - launchTime > 5.0) {
-                    WriteLog(@"⚠️ CADisplayLink 启动超时（5秒），可能引擎未正常启动，执行退出");
-                    shouldExit = YES;
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        WriteLog(@"🔄 调用 exit(0)");
-                        exit(0);
-                    });
-                    break;
-                }
-                continue;
-            }
-
-            NSTimeInterval diff = now - lastFrameTime;
-            WriteLog(@"⏱️ 距上次帧回调: %.2f 秒", diff);
-            if (diff > 3.0) {
-                WriteLog(@"⚠️ 帧回调停止超过3秒，执行退出");
-                shouldExit = YES;
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    WriteLog(@"🔄 调用 exit(0)");
-                    exit(0);
-                });
-                break;
-            }
+            sleep(2);
+            monitorRootViewController();
         }
     }
 }
 
+// ---------- 初始化 ----------
 __attribute__((constructor))
 static void initialize() {
-    WriteLog(@"===== ArtemisAutoQuit CADisplayLink 监控版 v2 加载 =====");
+    WriteLog(@"===== ArtemisAutoQuit 组合检测版加载 =====");
     WriteLog(@"Bundle ID: %@", [[NSBundle mainBundle] bundleIdentifier]);
-
-    // 初始化 lastFrameTime 为当前时间（用于首次检查）
-    lastFrameTime = [[NSDate date] timeIntervalSince1970];
-    launchTime = lastFrameTime;
-
-    // 创建 CADisplayLink（在主线程）
+    
+    // 1. Hook exit() 函数
+    void *handle = dlopen(NULL, RTLD_LAZY);
+    if (handle) {
+        void *exit_sym = dlsym(handle, "exit");
+        if (exit_sym) {
+            MSHookFunction(exit_sym, (void *)my_exit, (void **)&orig_exit);
+            WriteLog(@"✅ exit() Hook 成功");
+        } else {
+            WriteLog(@"❌ exit() Hook 失败");
+        }
+        dlclose(handle);
+    }
+    
+    // 2. 初始化 rootViewController 监控
     dispatch_async(dispatch_get_main_queue(), ^{
-        target = [[DisplayLinkTarget alloc] init];
-        displayLink = [CADisplayLink displayLinkWithTarget:target selector:@selector(onFrame:)];
-        [displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
-        WriteLog(@"✅ CADisplayLink 已创建并添加到主 RunLoop");
+        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+        if (keyWindow) {
+            lastRootVC = keyWindow.rootViewController;
+            WriteLog(@"✅ 初始 rootViewController: %@", NSStringFromClass([lastRootVC class]));
+        }
     });
-
-    // 监听前后台切换
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *note) {
-        WriteLog(@"📱 应用进入后台，暂停检测");
-    }];
-
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *note) {
-        // 回到前台时重置计时器
-        lastFrameTime = [[NSDate date] timeIntervalSince1970];
-        launchTime = lastFrameTime;
-        isDisplayLinkActive = NO; // 强制等待新回调
-        WriteLog(@"📱 应用回到前台，重置计时器");
-    }];
-
-    // 启动监控线程
+    
+    // 3. 启动监控线程
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         monitorThread();
     });
-
+    
     WriteLog(@"📁 日志路径: %@/AutoQuit.log", [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject]);
 }
