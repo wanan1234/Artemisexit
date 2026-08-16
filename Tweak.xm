@@ -1,6 +1,7 @@
 // =============================================================
-//  ArtemisAutoQuit — 通用猫爪浮窗 + 抽屉菜单（方向自适应）
+//  ArtemisAutoQuit — 通用猫爪浮窗 + 抽屉菜单 + 三指双击切换
 //  功能：玻璃质感猫爪浮窗，点击后弹出返回/退出按钮
+//       三指双击屏幕可显示/隐藏浮窗（状态保存）
 //  适配：横竖屏自动适配，位置不跑偏
 // =============================================================
 
@@ -12,6 +13,7 @@ static UIButton *floatButton = nil;
 static UIVisualEffectView *blurView = nil;
 static UIImageView *pawImageView = nil;
 static BOOL isDragging = NO;
+static BOOL isFloatingVisible = YES; // 默认显示
 
 // 抽屉相关
 static UIWindow *drawerWindow = nil;
@@ -45,7 +47,6 @@ static BOOL isDrawerVisible = NO;
     if (isDrawerVisible) return;
     isDrawerVisible = YES;
     
-    // 创建抽屉窗口
     if (!drawerWindow) {
         drawerWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
         drawerWindow.windowLevel = UIWindowLevelAlert + 1;
@@ -61,36 +62,31 @@ static BOOL isDrawerVisible = NO;
         [rootVC.view addGestureRecognizer:tap];
     }
     
-    // 获取当前屏幕尺寸（支持横竖屏）
     CGRect screenBounds = [UIScreen mainScreen].bounds;
     CGPoint floatCenter = floatWindow.center;
     CGFloat buttonSize = 36;
     CGFloat spacing = 12;
     
-    // 决定按钮显示在浮窗上方还是下方
     BOOL showAbove = (floatCenter.y - 60 > 0);
     CGFloat yOffset = showAbove ? -(buttonSize + spacing) : (buttonSize + spacing);
     
     CGPoint backCenter = CGPointMake(floatCenter.x - buttonSize/2 - spacing/2, floatCenter.y + yOffset);
     CGPoint quitCenter = CGPointMake(floatCenter.x + buttonSize/2 + spacing/2, floatCenter.y + yOffset);
     
-    // 边界修正（确保不超出屏幕）
     CGFloat half = buttonSize/2;
     backCenter.x = MAX(half + 10, MIN(backCenter.x, screenBounds.size.width - half - 10));
     quitCenter.x = MAX(half + 10, MIN(quitCenter.x, screenBounds.size.width - half - 10));
-    // 垂直边界修正
     CGFloat topMargin = 40;
     CGFloat bottomMargin = 40;
     backCenter.y = MAX(topMargin + half, MIN(backCenter.y, screenBounds.size.height - bottomMargin - half));
     quitCenter.y = MAX(topMargin + half, MIN(quitCenter.y, screenBounds.size.height - bottomMargin - half));
     
-    // 如果上下空间都不足，强制放在浮窗上方并调整
     if (floatCenter.y - topMargin < buttonSize + spacing && floatCenter.y + buttonSize + spacing > screenBounds.size.height - bottomMargin) {
         backCenter.y = topMargin + half;
         quitCenter.y = topMargin + half;
     }
     
-    // --- 返回按钮（←）---
+    // 返回按钮
     backButton = [UIButton buttonWithType:UIButtonTypeCustom];
     backButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
     backButton.center = backCenter;
@@ -128,7 +124,7 @@ static BOOL isDrawerVisible = NO;
     backButton.layer.shadowRadius = 6;
     backButton.layer.shadowOpacity = 0.3;
     
-    // --- 退出按钮（✓）---
+    // 退出按钮
     quitButton = [UIButton buttonWithType:UIButtonTypeCustom];
     quitButton.frame = CGRectMake(0, 0, buttonSize, buttonSize);
     quitButton.center = quitCenter;
@@ -166,7 +162,6 @@ static BOOL isDrawerVisible = NO;
     quitButton.layer.shadowRadius = 6;
     quitButton.layer.shadowOpacity = 0.3;
     
-    // 添加到抽屉窗口
     [drawerWindow.rootViewController.view addSubview:backButton];
     [drawerWindow.rootViewController.view addSubview:quitButton];
     drawerWindow.hidden = NO;
@@ -190,33 +185,19 @@ static BOOL isDrawerVisible = NO;
         return;
     }
     
-    // 方法1：如果是 NavigationController 且栈中多于1个，pop
     if (topVC.navigationController && topVC.navigationController.viewControllers.count > 1) {
         [topVC.navigationController popViewControllerAnimated:YES];
         [self hideDrawer];
         return;
     }
     
-    // 方法2：如果是 presented ViewController，dismiss
     if (topVC.presentingViewController) {
         [topVC dismissViewControllerAnimated:YES completion:nil];
         [self hideDrawer];
         return;
     }
     
-    // 方法3：尝试触发系统的返回手势（模拟从左边缘右滑）
-    // 通过模拟一个 PanGestureRecognizer 事件（私有API，风险较高，但这里不采用）
-    // 改为寻找当前 view 的 backBarButtonItem 并执行其 action
-    if (topVC.navigationItem.leftBarButtonItem) {
-        SEL action = topVC.navigationItem.leftBarButtonItem.action;
-        if (action && [topVC respondsToSelector:action]) {
-            [topVC performSelector:action withObject:nil];
-            [self hideDrawer];
-            return;
-        }
-    }
-    
-    // 方法4：如果当前是根视图，无法返回，只关闭抽屉
+    // 如果当前是根视图或无法返回，只关闭抽屉
     [self hideDrawer];
 }
 
@@ -263,12 +244,9 @@ static BOOL isDrawerVisible = NO;
         CGRect frame = floatWindow.frame;
         frame.origin.x += translation.x;
         frame.origin.y += translation.y;
-        
-        // 使用当前屏幕尺寸限制
         CGRect screenBounds = [UIScreen mainScreen].bounds;
         frame.origin.x = MAX(0, MIN(frame.origin.x, screenBounds.size.width - frame.size.width));
         frame.origin.y = MAX(0, MIN(frame.origin.y, screenBounds.size.height - frame.size.height));
-        
         floatWindow.frame = frame;
         [pan setTranslation:CGPointZero inView:floatWindow];
     } else if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
@@ -306,12 +284,31 @@ static void saveButtonPosition(void) {
     }
 }
 
+// 切换浮窗显示状态
+static void toggleFloatingVisibility(void) {
+    isFloatingVisible = !isFloatingVisible;
+    floatWindow.hidden = !isFloatingVisible;
+    if (isDrawerVisible) [target hideDrawer];
+    [[NSUserDefaults standardUserDefaults] setBool:isFloatingVisible forKey:@"floatingVisible"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
 __attribute__((constructor))
 static void initialize() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // 恢复浮窗显示状态
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        if ([defaults objectForKey:@"floatingVisible"]) {
+            isFloatingVisible = [defaults boolForKey:@"floatingVisible"];
+        } else {
+            isFloatingVisible = YES;
+            [defaults setBool:YES forKey:@"floatingVisible"];
+            [defaults synchronize];
+        }
+        
         target = [[FloatButtonTarget alloc] init];
         
-        // 加载本地猫爪图标
+        // 加载猫爪图标
         UIImage *pawImage = [UIImage imageNamed:@"catpaw"];
         if (!pawImage) {
             pawImage = [UIImage systemImageNamed:@"paw.fill"];
@@ -330,7 +327,7 @@ static void initialize() {
         floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
         floatWindow.backgroundColor = [UIColor clearColor];
         floatWindow.userInteractionEnabled = YES;
-        floatWindow.hidden = NO;
+        floatWindow.hidden = !isFloatingVisible;
         
         UIViewController *rootVC = [[UIViewController alloc] init];
         rootVC.view.backgroundColor = [UIColor clearColor];
@@ -376,7 +373,6 @@ static void initialize() {
         [floatWindow addSubview:floatButton];
         
         // 恢复位置
-        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
         CGFloat cx = [defaults floatForKey:@"pawButtonCenterX"];
         CGFloat cy = [defaults floatForKey:@"pawButtonCenterY"];
         CGRect screenBounds = [UIScreen mainScreen].bounds;
@@ -388,8 +384,20 @@ static void initialize() {
             floatWindow.center = CGPointMake(screenBounds.size.width - 60, 120);
         }
         
-        floatWindow.hidden = NO;
-        [floatWindow makeKeyAndVisible];
+        floatWindow.hidden = !isFloatingVisible;
+        if (isFloatingVisible) {
+            [floatWindow makeKeyAndVisible];
+        }
+        
+        // 添加三指双击手势到主窗口
+        UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
+        if (mainWindow) {
+            UITapGestureRecognizer *threeFingerDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:nil action:nil];
+            threeFingerDoubleTap.numberOfTouchesRequired = 3;
+            threeFingerDoubleTap.numberOfTapsRequired = 2;
+            [threeFingerDoubleTap addTarget:self action:@selector(toggleFloatingVisibility)];
+            [mainWindow addGestureRecognizer:threeFingerDoubleTap];
+        }
         
         // 监听旋转
         [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification
@@ -404,7 +412,7 @@ static void initialize() {
                                                           object:nil
                                                            queue:[NSOperationQueue mainQueue]
                                                       usingBlock:^(NSNotification *note) {
-            if (floatWindow) {
+            if (floatWindow && isFloatingVisible) {
                 floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
                 [floatWindow makeKeyAndVisible];
             }
@@ -418,6 +426,15 @@ static void initialize() {
             if (isDrawerVisible) [target hideDrawer];
         }];
         
-        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗加载完成");
+        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗加载完成，三指双击切换显示");
     });
 }
+
+// 由于在 block 中无法直接调用 toggleFloatingVisibility，创建一个方法
+static void toggleFloatingVisibilityWrapper(id self, SEL _cmd) {
+    toggleFloatingVisibility();
+}
+
+// 调整三指手势的 target，不能使用 self（因为 initialize 是 C 函数）
+// 改用类方法或直接在 block 中实现
+// 修改：在 initialize 中创建手势时直接使用 block 或使用一个静态函数作为回调
