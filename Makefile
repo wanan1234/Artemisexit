@@ -6,6 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = ArtemisDiagnose
 ArtemisDiagnose_FILES = Tweak.xm
-ArtemisDiagnose_CFLAGS = -fobjc-arc
+ArtemisDiagnose_CFLAGS = -fobjc-arc -Wno-error  # 禁止将警告视为错误
+ArtemisDiagnose_LDFLAGS = -lfishhook
 
 include $(THEOS_MAKE_PATH)/tweak.mk
