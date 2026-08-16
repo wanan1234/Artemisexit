@@ -1,25 +1,23 @@
 // =============================================================
-//  ArtemisAutoQuit — 极简版
-//  功能：猫爪浮窗（点击退出）+ 三指双击切换显示
-//  适配：横竖屏自适应
+//  ArtemisAutoQuit — 最终简化版
+//  功能：猫爪浮窗（点击弹出退出确认，长按直接退出）
+//       三指双击切换浮窗显示/隐藏
+//  适配：横竖屏自适应，位置记忆
 // =============================================================
 
 #import <UIKit/UIKit.h>
 #import <substrate.h>
 
+// 全局变量
 static UIWindow *floatWindow = nil;
 static UIButton *floatButton = nil;
-static UIVisualEffectView *blurView = nil;
-static UIImageView *pawImageView = nil;
-static BOOL isDragging = NO;
 static BOOL isFloatingVisible = YES;
 
-// 手势处理类
-@interface GestureHandler : NSObject
+// 手势目标类（避免编译警告）
+@interface GestureTarget : NSObject
 + (void)handleThreeFingerDoubleTap;
 @end
-
-@implementation GestureHandler
+@implementation GestureTarget
 + (void)handleThreeFingerDoubleTap {
     isFloatingVisible = !isFloatingVisible;
     floatWindow.hidden = !isFloatingVisible;
@@ -29,44 +27,17 @@ static BOOL isFloatingVisible = YES;
 @end
 
 // 浮窗事件处理
-@interface FloatButtonTarget : NSObject
-+ (instancetype)sharedInstance;
-- (void)buttonTapped;
-- (void)handlePan:(UIPanGestureRecognizer *)pan;
-- (void)updateWindowFrame;
-- (UIViewController *)topViewController;
+@interface FloatHandler : NSObject
++ (void)buttonTapped;
++ (void)buttonLongPressed;
++ (void)handlePan:(UIPanGestureRecognizer *)pan;
++ (void)updateWindowFrame;
++ (UIViewController *)topViewController;
 @end
 
-@implementation FloatButtonTarget
+@implementation FloatHandler
 
-+ (instancetype)sharedInstance {
-    static FloatButtonTarget *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[FloatButtonTarget alloc] init];
-    });
-    return instance;
-}
-
-- (void)buttonTapped {
-    UIViewController *topVC = [self topViewController];
-    if (!topVC) {
-        exit(0);
-        return;
-    }
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出程序"
-                                                                   message:@"确定要退出程序吗？"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        exit(0);
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    
-    [topVC presentViewController:alert animated:YES completion:nil];
-}
-
-- (UIViewController *)topViewController {
++ (UIViewController *)topViewController {
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return nil;
     UIViewController *topVC = keyWindow.rootViewController;
@@ -76,24 +47,53 @@ static BOOL isFloatingVisible = YES;
     return topVC;
 }
 
-- (void)handlePan:(UIPanGestureRecognizer *)pan {
++ (void)buttonTapped {
+    UIViewController *topVC = [self topViewController];
+    if (!topVC) {
+        // 无视图控制器时直接退出
+        exit(0);
+        return;
+    }
+    
+    // 使用UIAlertController，不会被遮挡（因为floatWindow层级高于游戏）
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"退出程序"
+                                                                   message:@"确定要退出程序吗？"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        exit(0);
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    
+    // 如果当前有presentedViewController，在它上面present
+    UIViewController *presenter = topVC;
+    while (presenter.presentedViewController) {
+        presenter = presenter.presentedViewController;
+    }
+    [presenter presentViewController:alert animated:YES completion:nil];
+}
+
++ (void)buttonLongPressed {
+    // 长按直接退出（无需确认）
+    exit(0);
+}
+
++ (void)handlePan:(UIPanGestureRecognizer *)pan {
+    static CGPoint startCenter;
     if (pan.state == UIGestureRecognizerStateBegan) {
-        isDragging = YES;
+        startCenter = floatWindow.center;
         [UIView animateWithDuration:0.2 animations:^{
             floatButton.transform = CGAffineTransformMakeScale(1.2, 1.2);
         }];
     } else if (pan.state == UIGestureRecognizerStateChanged) {
-        CGPoint translation = [pan translationInView:floatWindow];
-        CGRect frame = floatWindow.frame;
-        frame.origin.x += translation.x;
-        frame.origin.y += translation.y;
+        CGPoint translation = [pan translationInView:floatWindow.superview];
+        CGPoint newCenter = CGPointMake(startCenter.x + translation.x, startCenter.y + translation.y);
         CGRect screenBounds = [UIScreen mainScreen].bounds;
-        frame.origin.x = MAX(0, MIN(frame.origin.x, screenBounds.size.width - frame.size.width));
-        frame.origin.y = MAX(0, MIN(frame.origin.y, screenBounds.size.height - frame.size.height));
-        floatWindow.frame = frame;
-        [pan setTranslation:CGPointZero inView:floatWindow];
+        CGFloat halfWidth = floatWindow.frame.size.width / 2;
+        CGFloat halfHeight = floatWindow.frame.size.height / 2;
+        newCenter.x = MAX(halfWidth, MIN(newCenter.x, screenBounds.size.width - halfWidth));
+        newCenter.y = MAX(halfHeight, MIN(newCenter.y, screenBounds.size.height - halfHeight));
+        floatWindow.center = newCenter;
     } else if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        isDragging = NO;
         [UIView animateWithDuration:0.2 animations:^{
             floatButton.transform = CGAffineTransformIdentity;
         }];
@@ -104,29 +104,23 @@ static BOOL isFloatingVisible = YES;
     }
 }
 
-- (void)updateWindowFrame {
++ (void)updateWindowFrame {
     if (!floatWindow) return;
     CGRect screenBounds = [UIScreen mainScreen].bounds;
-    CGRect frame = floatWindow.frame;
-    frame.origin.x = MAX(0, MIN(frame.origin.x, screenBounds.size.width - frame.size.width));
-    frame.origin.y = MAX(0, MIN(frame.origin.y, screenBounds.size.height - frame.size.height));
-    floatWindow.frame = frame;
+    CGPoint center = floatWindow.center;
+    CGFloat halfWidth = floatWindow.frame.size.width / 2;
+    CGFloat halfHeight = floatWindow.frame.size.height / 2;
+    center.x = MAX(halfWidth, MIN(center.x, screenBounds.size.width - halfWidth));
+    center.y = MAX(halfHeight, MIN(center.y, screenBounds.size.height - halfHeight));
+    floatWindow.center = center;
 }
 
 @end
 
-static void saveButtonPosition(void) {
-    if (floatWindow) {
-        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-        [defaults setFloat:floatWindow.center.x forKey:@"pawButtonCenterX"];
-        [defaults setFloat:floatWindow.center.y forKey:@"pawButtonCenterY"];
-        [defaults synchronize];
-    }
-}
-
 __attribute__((constructor))
 static void initialize() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // 恢复显示状态
         NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
         if ([defaults objectForKey:@"floatingVisible"]) {
             isFloatingVisible = [defaults boolForKey:@"floatingVisible"];
@@ -150,9 +144,9 @@ static void initialize() {
             }
         }
         
-        // 创建浮窗
+        // 创建浮窗（40x40）
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
-        floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
+        floatWindow.windowLevel = UIWindowLevelStatusBar + 1; // 确保在最上层
         floatWindow.backgroundColor = [UIColor clearColor];
         floatWindow.userInteractionEnabled = YES;
         floatWindow.hidden = !isFloatingVisible;
@@ -162,6 +156,7 @@ static void initialize() {
         rootVC.view.userInteractionEnabled = NO;
         floatWindow.rootViewController = rootVC;
         
+        // 按钮
         floatButton = [UIButton buttonWithType:UIButtonTypeCustom];
         floatButton.frame = CGRectMake(0, 0, 40, 40);
         floatButton.backgroundColor = [UIColor clearColor];
@@ -169,13 +164,14 @@ static void initialize() {
         
         // 玻璃效果
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
-        blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
+        UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         blurView.frame = floatButton.bounds;
         blurView.layer.cornerRadius = 20;
         blurView.clipsToBounds = YES;
         blurView.userInteractionEnabled = NO;
         [floatButton addSubview:blurView];
         
+        // 半透明白色覆盖，增强玻璃感
         UIView *tintView = [[UIView alloc] initWithFrame:floatButton.bounds];
         tintView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.2];
         tintView.layer.cornerRadius = 20;
@@ -183,20 +179,29 @@ static void initialize() {
         tintView.userInteractionEnabled = NO;
         [floatButton addSubview:tintView];
         
-        pawImageView = [[UIImageView alloc] initWithImage:pawImage];
+        // 猫爪图标
+        UIImageView *pawImageView = [[UIImageView alloc] initWithImage:pawImage];
         pawImageView.contentMode = UIViewContentModeScaleAspectFit;
         pawImageView.frame = CGRectMake(9, 9, 22, 22);
         pawImageView.userInteractionEnabled = NO;
         [floatButton addSubview:pawImageView];
         
+        // 阴影
         floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
         floatButton.layer.shadowOffset = CGSizeMake(0, 2);
         floatButton.layer.shadowRadius = 6;
         floatButton.layer.shadowOpacity = 0.25;
         
-        FloatButtonTarget *target = [FloatButtonTarget sharedInstance];
-        [floatButton addTarget:target action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:target action:@selector(handlePan:)];
+        // 事件绑定（使用类方法）
+        [floatButton addTarget:[FloatHandler class] action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
+        
+        // 长按手势（直接退出）
+        UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:[FloatHandler class] action:@selector(buttonLongPressed)];
+        longPress.minimumPressDuration = 0.8; // 0.8秒长按
+        [floatButton addGestureRecognizer:longPress];
+        
+        // 拖动手势
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[FloatHandler class] action:@selector(handlePan:)];
         [floatButton addGestureRecognizer:pan];
         
         [floatWindow addSubview:floatButton];
@@ -218,55 +223,45 @@ static void initialize() {
             [floatWindow makeKeyAndVisible];
         }
         
-        // 添加三指双击手势到主窗口
+        // ---------- 三指双击手势（添加到主窗口） ----------
         UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
         if (mainWindow) {
-            UITapGestureRecognizer *threeFingerDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:[GestureHandler class] action:@selector(handleThreeFingerDoubleTap)];
-            threeFingerDoubleTap.numberOfTouchesRequired = 3;
-            threeFingerDoubleTap.numberOfTapsRequired = 2;
-            threeFingerDoubleTap.cancelsTouchesInView = NO;
-            [mainWindow addGestureRecognizer:threeFingerDoubleTap];
-        } else {
-            // 如果 keyWindow 为空，遍历所有窗口添加
-            for (UIWindow *win in [UIApplication sharedApplication].windows) {
-                if (win.hidden == NO) {
-                    UITapGestureRecognizer *threeFingerDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:[GestureHandler class] action:@selector(handleThreeFingerDoubleTap)];
-                    threeFingerDoubleTap.numberOfTouchesRequired = 3;
-                    threeFingerDoubleTap.numberOfTapsRequired = 2;
-                    threeFingerDoubleTap.cancelsTouchesInView = NO;
-                    [win addGestureRecognizer:threeFingerDoubleTap];
-                }
+            // 检查是否已存在相同手势，避免重复添加
+            static BOOL gestureAdded = NO;
+            if (!gestureAdded) {
+                UITapGestureRecognizer *threeFingerDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:[GestureTarget class] action:@selector(handleThreeFingerDoubleTap)];
+                threeFingerDoubleTap.numberOfTouchesRequired = 3;
+                threeFingerDoubleTap.numberOfTapsRequired = 2;
+                [mainWindow addGestureRecognizer:threeFingerDoubleTap];
+                gestureAdded = YES;
+                NSLog(@"[ArtemisAutoQuit] 三指双击手势已添加");
             }
         }
         
-        // 监听旋转，延迟更新浮窗位置
+        // ---------- 屏幕旋转适配 ----------
         [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification
                                                           object:nil
                                                            queue:[NSOperationQueue mainQueue]
                                                       usingBlock:^(NSNotification *note) {
+            // 延迟执行，等待旋转完成
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [target updateWindowFrame];
+                [FloatHandler updateWindowFrame];
             });
         }];
         
-        // 回到前台重新置顶
-        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
-                                                          object:nil
-                                                           queue:[NSOperationQueue mainQueue]
-                                                      usingBlock:^(NSNotification *note) {
-            if (floatWindow && isFloatingVisible) {
-                floatWindow.windowLevel = UIWindowLevelStatusBar + 1;
-                [floatWindow makeKeyAndVisible];
-            }
-        }];
-        
+        // 后台保存位置
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
                                                           object:nil
                                                            queue:[NSOperationQueue mainQueue]
                                                       usingBlock:^(NSNotification *note) {
-            saveButtonPosition();
+            if (floatWindow) {
+                NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+                [defaults setFloat:floatWindow.center.x forKey:@"pawButtonCenterX"];
+                [defaults setFloat:floatWindow.center.y forKey:@"pawButtonCenterY"];
+                [defaults synchronize];
+            }
         }];
         
-        NSLog(@"[ArtemisAutoQuit] 加载完成，三指双击切换浮窗");
+        NSLog(@"[ArtemisAutoQuit] 猫爪浮窗加载完成 (点击确认退出，长按直接退出，三指双击切换)");
     });
 }
